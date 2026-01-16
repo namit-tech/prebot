@@ -1,0 +1,55 @@
+{
+  "name": "prebot-electron",
+  "version": "1.0.0",
+  "description": "PreBot Electron Wrapper",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "cross-env NODE_ENV=development electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux"
+  },
+  "keywords": [
+    "electron",
+    "desktop",
+    "app"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4",
+    "cross-env": "^7.0.3"
+  },
+  "build": {
+    "appId": "com.prebot.assistant",
+    "productName": "PreBot",
+    "directories": {
+      "output": "../dist-electron"
+    },
+    "files": [
+      "**/*",
+      "../frontend/dist/**/*"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "../assets/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "../assets/icon.icns"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "../assets/icon.png"
+    }
+  }
+}
+

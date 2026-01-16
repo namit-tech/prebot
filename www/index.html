@@ -1,0 +1,1791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="theme-color" content="#667eea">
+    <title>Mobile Questions - AI Assistant</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+            padding: 0;
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        html {
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+        }
+
+        .ip-input-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .ip-input-container.hidden {
+            display: none;
+        }
+
+        .ip-input-box {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 90%;
+            width: 400px;
+            text-align: center;
+        }
+
+        .ip-input-box h3 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 18px;
+        }
+
+        .ip-input-box input {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        .ip-input-box button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        .mobile-heading {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 15px;
+            text-align: center;
+            font-size: 24px;
+            font-weight: bold;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .mobile-heading.hidden {
+            display: none;
+        }
+
+        .questions-container {
+            padding: 15px;
+            max-height: 100vh;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+            overscroll-behavior: contain;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding-bottom: 60px; /* Space for copyright footer */
+            min-height: calc(100vh - 60px);
+            width: 100%;
+        }
+
+        .questions-container.with-heading {
+            max-height: calc(100vh - 80px);
+        }
+
+        .questions-container.with-heading.with-copyright {
+            max-height: calc(100vh - 140px);
+        }
+
+        .question-item {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 18px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 500px;
+            text-align: center;
+            position: relative;
+            z-index: 10002; /* Always above lock overlay */
+            pointer-events: auto; /* Always clickable */
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .question-item:active {
+            transform: scale(0.98);
+            background: #f0f2ff;
+            border-color: #667eea;
+        }
+
+        .question-text {
+            font-size: 16px;
+            font-weight: 500;
+            color: #333;
+            line-height: 1.4;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #666;
+            width: 90%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-message {
+            text-align: center;
+            padding: 60px 20px;
+            color: #999;
+            font-size: 14px;
+            width: 90%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto;
+        }
+
+        /* Hidden Lock/Unlock Button */
+        .lock-button {
+            position: fixed;
+            top: 5px;
+            left: 5px;
+            width: 40px;
+            height: 40px;
+            background: rgba(102, 126, 234, 0.1);
+            border: 2px solid rgba(102, 126, 234, 0.3);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            cursor: pointer;
+            z-index: 9999;
+            opacity: 0.3;
+            transition: all 0.3s ease;
+            touch-action: manipulation;
+        }
+
+        .lock-button:hover,
+        .lock-button:active {
+            opacity: 1;
+            background: rgba(102, 126, 234, 0.2);
+            transform: scale(1.1);
+        }
+
+        .lock-button.locked {
+            background: rgba(220, 53, 69, 0.2);
+            border-color: rgba(220, 53, 69, 0.5);
+        }
+
+        /* Lock Overlay - Completely Removed */
+        /* No lock overlay modal - questions remain fully accessible when locked */
+
+        /* Password Prompt */
+        .password-prompt {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.85);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 20000; /* Higher than questions (10002) and lock button (10000) */
+            backdrop-filter: blur(5px);
+        }
+
+        .password-prompt.active {
+            display: flex;
+        }
+        
+        /* Hide questions when password prompt is active */
+        body.password-prompt-active .questions-container {
+            opacity: 0.3;
+            pointer-events: none;
+        }
+        
+        body.password-prompt-active .question-item {
+            pointer-events: none;
+        }
+
+        .password-prompt-box {
+            background: white;
+            padding: 30px;
+            border-radius: 15px;
+            max-width: 90%;
+            width: 350px;
+            text-align: center;
+        }
+
+        .password-prompt-box h3 {
+            margin-bottom: 20px;
+            color: #333;
+            font-size: 18px;
+        }
+
+        .password-prompt-box input {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: 2px solid #667eea;
+            border-radius: 10px;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        .password-prompt-box .error-message {
+            color: #dc3545;
+            font-size: 14px;
+            margin-top: 10px;
+            display: none;
+        }
+
+        .password-prompt-box .error-message.show {
+            display: block;
+        }
+
+        .password-prompt-box button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+
+        .password-prompt-box button.cancel {
+            background: #6c757d;
+            margin-top: 5px;
+        }
+
+        /* Essential Z-Index Fixes */
+        #loginPrompt {
+            z-index: 2147483647 !important; /* Max Int */
+        }
+        
+        #loginPrompt .password-prompt-box {
+            background: white;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            border: 2px solid #667eea;
+        }
+
+        /* Copyright Footer */
+        .copyright-footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(102, 126, 234, 0.95);
+            color: white;
+            text-align: center;
+            padding: 10px;
+            font-size: 12px;
+            z-index: 999;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+        }
+
+        .copyright-footer span {
+            font-weight: 500;
+        }
+
+        /* Fullscreen styles */
+        body.fullscreen {
+            height: 100vh;
+            height: -webkit-fill-available;
+        }
+        /* Chat Interface Styles */
+        .chat-container {
+            display: none;
+            flex-direction: column;
+            height: 100vh;
+            background: #f0f2f5;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 50;
+        }
+
+        .chat-container.active {
+            display: flex;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            padding-bottom: 80px; /* Space for input area */
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .message {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 15px;
+            font-size: 16px;
+            line-height: 1.4;
+            position: relative;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            background: #667eea;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.ai {
+            align-self: flex-start;
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+
+        .chat-input-area {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            padding: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+            z-index: 100;
+        }
+
+        .chat-input {
+            flex: 1;
+            border: 1px solid #e1e4e8;
+            border-radius: 24px;
+            padding: 12px 20px;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .chat-input:focus {
+            border-color: #667eea;
+        }
+
+        .mic-button {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #f8f9fa;
+            border: none;
+            color: #667eea;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mic-button.listening {
+            background: #ef4444;
+            color: white;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+            100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        .send-button {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: #667eea;
+            border: none;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: transform 0.1s;
+        }
+
+        .send-button:active {
+            transform: scale(0.95);
+        }
+        body.fullscreen {
+            height: 100vh;
+            height: -webkit-fill-available;
+        }
+
+        .debug-info {
+            position: fixed;
+            bottom: 70px; /* Above chat input / copyright */
+            left: 10px;
+            font-size: 10px;
+            color: #ccc;
+            z-index: 2000;
+            pointer-events: none;
+            text-align: left;
+        }
+
+        .logout-btn {
+            position: fixed;
+            top: 15px;
+            right: 15px;
+            background: rgba(220, 53, 69, 0.8);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            border: none;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 10005; /* Top most */
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <!-- Logout Button -->
+    <button class="logout-btn" onclick="mobileApp.logout()">Logout</button>
+    
+    <!-- Video Player Container for Hologram (Hidden by default, triggered by Desktop) -->
+    <div id="videoContainer" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:black; z-index:99999;">
+        <video id="hologramVideo" style="width:100%; height:100%; object-fit:cover;" playsinline webkit-playsinline></video>
+        <button onclick="document.getElementById('videoContainer').style.display='none'" style="position:absolute; top:20px; right:20px; z-index:100000; padding:10px; background:rgba(255,255,255,0.3); border:none; color:white; border-radius:50%;">✕</button>
+    </div>
+
+    <!-- Debug Info -->
+    <div class="debug-info" id="debugInfo"></div>
+    <!-- Hidden Lock/Unlock Button -->
+    <div class="lock-button" id="lockButton" onclick="mobileApp.toggleLock()" title="Lock/Unlock Screen">
+        🔒
+    </div>
+
+    <!-- Password Prompt -->
+    <div class="password-prompt" id="passwordPrompt">
+        <div class="password-prompt-box">
+            <h3>🔓 Enter Password to Unlock</h3>
+            <input type="password" id="passwordInput" placeholder="Enter password" autocomplete="off">
+            <div class="error-message" id="passwordError">Incorrect password. Please try again.</div>
+            <button onclick="mobileApp.verifyPassword()">Unlock</button>
+            <button class="cancel" onclick="mobileApp.cancelPasswordPrompt()">Cancel</button>
+        </div>
+    </div>
+
+    <div class="ip-input-container" id="ipInputContainer">
+        <div class="ip-input-box">
+            <h3>Enter Desktop IP Address</h3>
+            <input type="text" id="manualIP" placeholder="192.168.1.3" autocomplete="off">
+            <button onclick="mobileApp.connectToManualIP()">Connect</button>
+        </div>
+    </div>
+
+    <div class="mobile-heading hidden" id="mobileHeading"></div>
+    
+    <!-- Predefined Questions Interface -->
+    <div class="questions-container" id="questionsContainer">
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Loading questions...</p>
+        </div>
+    </div>
+
+    <!-- Chat Interface (AI Brain) -->
+    <div class="chat-container" id="chatContainer">
+        <div class="chat-messages" id="chatMessages">
+            <div class="message ai">
+                Hello! I'm your AI Assistant. How can I help you today?
+            </div>
+        </div>
+        <div class="chat-input-area">
+            <button class="mic-button" id="micButton" onclick="mobileApp.toggleMic()">
+                🎤
+            </button>
+            <input type="text" class="chat-input" id="chatInput" placeholder="Type a message...">
+            <button class="send-button" onclick="mobileApp.sendChatMessage()">
+                ➤
+            </button>
+        </div>
+    </div>
+
+    <!-- Login Overlay -->
+    <div class="password-prompt" id="loginPrompt">
+        <div class="password-prompt-box">
+            <h3>👤 Desktop Login Required</h3>
+            <p style="font-size: 14px; color: #666; margin-bottom: 20px;">
+                Please enter the email address you use to log in to the Desktop App.
+            </p>
+            <input type="email" id="loginEmail" placeholder="Enter your email" autocomplete="email">
+            <div class="error-message" id="loginError">Authentication failed</div>
+            <button onclick="mobileApp.login()" id="loginBtn">Verify & Login</button>
+            <button onclick="mobileApp.showIPInput(); mobileApp.hideLoginPrompt()" style="margin-top:10px; background:#6c757d; font-size:12px;">Unknown IP? Change Server</button>
+        </div>
+    </div>
+
+    <!-- Copyright Footer -->
+    <div class="copyright-footer">
+        Copyright © <span>elloIndia</span>
+    </div>
+
+    <!-- Capacitor will be loaded from node_modules when running in app -->
+    <!-- Debug Log Console (Moved to Top) -->
+    <div id="debugConsole" style="position:fixed; top:0; left:0; right:0; height:200px; background:rgba(0,0,0,0.9); color:#0f0; font-family:monospace; font-size:10px; overflow-y:auto; padding:5px; z-index:9999; display:none; border-bottom: 2px solid #667eea;">
+        <div style="margin-bottom:10px; padding-bottom:5px; border-bottom:1px solid #333;">
+            <button onclick="mobileApp.testAudioPermission()" style="padding:5px 10px; background:#fff; color:black; border:none; border-radius:4px; font-weight:bold;">🎤 Test Mic Permission</button>
+            <button onclick="location.reload(true)" style="padding:5px 10px; background:#667eea; color:white; border:none; border-radius:4px; margin-left:10px;">🔄 Refresh</button>
+            <button onclick="document.getElementById('debugConsole').style.display='none'" style="float:right; background:red; color:white; border:none; padding:5px;">✕</button>
+        </div>
+        <div>Debug Console Started...</div>
+    </div>
+    <!-- Bug Button (Moved to Top Right below Logout) -->
+    <button onclick="document.getElementById('debugConsole').style.display = document.getElementById('debugConsole').style.display === 'none' ? 'block' : 'none'" style="position:fixed; top:60px; right:10px; z-index:10000; opacity:0.8; font-size:16px; padding:5px; background:rgba(0,0,0,0.5); border-radius:50%; border:none;">🐞</button>
+
+    <script src="capacitor-mobile.js"></script>
+
+    <script>
+        // Override console logging to show on screen
+        (function() {
+            const originalLog = console.log;
+            const originalError = console.error;
+            const originalWarn = console.warn;
+            const debugConsole = document.getElementById('debugConsole');
+
+            function appendToConsole(type, args) {
+                if (!debugConsole) return;
+                const msg = Array.from(args).map(arg => {
+                    if (typeof arg === 'object') return JSON.stringify(arg);
+                    return String(arg);
+                }).join(' ');
+                const div = document.createElement('div');
+                div.style.color = type === 'error' ? '#ff6b6b' : type === 'warn' ? '#feca57' : '#0f0';
+                div.style.borderBottom = '1px solid #333';
+                div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+                debugConsole.insertBefore(div, debugConsole.firstChild);
+            }
+
+            console.log = function() {
+                originalLog.apply(console, arguments);
+                appendToConsole('log', arguments);
+            };
+            console.error = function() {
+                originalError.apply(console, arguments);
+                appendToConsole('error', arguments);
+            };
+            console.warn = function() {
+                originalWarn.apply(console, arguments);
+                appendToConsole('warn', arguments);
+            };
+        })();
+
+        class MobileQuestions {
+            constructor() {
+                this.desktopIP = null;
+                this.questions = [];
+                this.isConnected = false;
+                this.isLocked = false;
+                this.originalUrl = window.location.href;
+                this.urlCheckInterval = null;
+                this.backButtonListener = null;
+                this.isCapacitor = false;
+                this.unlockPassword = null;
+                this.lastPasswordCheck = null;
+                
+                // Auth state
+                this.userEmail = localStorage.getItem('mobile_auth_email');
+                this.expiryDate = localStorage.getItem('mobile_auth_expiry');
+                this.userModels = localStorage.getItem('mobile_auth_models') ? JSON.parse(localStorage.getItem('mobile_auth_models')) : [];
+                
+                this.isListening = false;
+                this.recognition = null;
+                this.lastInputMethod = 'text'; // 'text' or 'voice'
+                this.setupSpeechRecognition();
+                
+
+                
+                // FORCE UPDATE DEBUG DISPLAY
+                setTimeout(() => this.updateDebugInfo(), 1000);
+
+                this.init();
+            }
+
+            updateDebugInfo() {
+                const debugEl = document.getElementById('debugInfo');
+                if (debugEl) {
+                    debugEl.innerHTML = `
+                        Email: ${this.userEmail || 'Not logged in'}<br>
+                        Models: ${JSON.stringify(this.userModels)}<br>
+                        Expiry: ${this.expiryDate || 'None'}
+                    `;
+                }
+            }
+
+            logout() {
+                if (confirm('Are you sure you want to logout and reset connection?')) {
+                    localStorage.clear(); // Clear EVERYTHING (Auth + IP)
+                    location.reload();
+                }
+            }
+
+            async init() {
+                // Wait a bit for Capacitor to load
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                // Check if running in Capacitor
+                this.isCapacitor = window.isCapacitorAvailable && window.isCapacitorAvailable();
+                
+                if (this.isCapacitor) {
+                    console.log('✅ Running in Capacitor - Hardware back button control enabled');
+                    await this.setupCapacitor();
+                } else {
+                    console.log('⚠️ Running in browser - Limited back button control');
+                }
+                
+                this.enterFullscreen();
+                this.setupLockSystem();
+                this.setupEventListeners();
+                
+                // Start connection flow
+                await this.findDesktopIP();
+                
+                this.startConnectionCheck();
+                this.preventNavigation();
+            }
+            
+            // ... (keep existing methods) ...
+
+            // Auth Methods
+            checkAuth() {
+                if (!this.userEmail) {
+                    this.showLoginPrompt('Desktop Login Required');
+                    return false;
+                }
+                
+                // Ensure models are loaded
+                if ((!this.userModels || this.userModels.length === 0) && this.userEmail) {
+                    // Auto-refresh session if models are missing but we have an email
+                    console.log('⚠️ Models missing, attempting auto-refresh...');
+                    this.refreshSession();
+                }
+
+                // Check Expiry
+                
+                // Check Expiry
+                if (this.expiryDate && this.expiryDate !== 'null') {
+                    const expiry = new Date(this.expiryDate);
+                    const now = new Date();
+                    
+                    if (now > expiry) {
+                        console.log('❌ License expired on:', expiry);
+                        this.userEmail = null;
+                        this.expiryDate = null;
+                        localStorage.removeItem('mobile_auth_email');
+                        localStorage.removeItem('mobile_auth_expiry');
+                        this.showLoginPrompt('License Expired. Please Re-Login.');
+                        return false;
+                    }
+                }
+                
+                return true;
+            }
+
+            showLoginPrompt(title = 'Desktop Login Required') {
+                const prompt = document.getElementById('loginPrompt');
+                const titleEl = prompt.querySelector('h3');
+                if (titleEl) titleEl.textContent = title;
+                
+                prompt.classList.add('active');
+                document.body.classList.add('password-prompt-active');
+            }
+            
+            hideLoginPrompt() {
+                const prompt = document.getElementById('loginPrompt');
+                prompt.classList.remove('active');
+                document.body.classList.remove('password-prompt-active');
+            }
+
+            async login() {
+                const emailInput = document.getElementById('loginEmail');
+                const errorMsg = document.getElementById('loginError');
+                const email = emailInput.value.trim();
+
+                if (!email) {
+                    errorMsg.textContent = 'Please enter your email';
+                    errorMsg.classList.add('show');
+                    return;
+                }
+                
+                if (!this.desktopIP) {
+                    errorMsg.textContent = 'Not connected to Desktop App';
+                    errorMsg.classList.add('show');
+                    return;
+                }
+
+                // Show loading state
+                const btn = document.querySelector('#loginPrompt button');
+                const originalText = btn.textContent;
+                btn.textContent = 'Verifying...';
+                btn.disabled = true;
+                errorMsg.classList.remove('show');
+
+                try {
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/mobile-login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email })
+                    });
+
+                    const data = await response.json();
+
+                    if (data.success) {
+                        // Success!
+                        this.userEmail = email;
+                        localStorage.setItem('mobile_auth_email', email);
+                        
+                        // Save Expiry
+                        if (data.user && data.user.expiryDate) {
+                            this.expiryDate = data.user.expiryDate;
+                            localStorage.setItem('mobile_auth_expiry', data.user.expiryDate);
+                        } else {
+                            this.expiryDate = null;
+                            localStorage.removeItem('mobile_auth_expiry');
+                        }
+
+                        // Save Models
+                        if (data.user && data.user.models) {
+                            this.userModels = data.user.models;
+                            localStorage.setItem('mobile_auth_models', JSON.stringify(data.user.models));
+                        } else {
+                            this.userModels = [];
+                            localStorage.removeItem('mobile_auth_models');
+                        }
+                        
+                        this.hideLoginPrompt();
+                        
+                        // Reload questions to ensure everything is fresh
+                        this.loadQuestions();
+                    } else {
+                        // Failed
+                        errorMsg.textContent = data.message || 'Authentication failed';
+                        errorMsg.classList.add('show');
+                        btn.textContent = originalText;
+                        btn.disabled = false;
+                    }
+                } catch (error) {
+                    console.error('Login error:', error);
+                    errorMsg.innerHTML = `
+                        Connection Failed.<br>
+                        <button onclick="mobileApp.showIPInput(); mobileApp.hideLoginPrompt()" style="margin-top:5px; padding:5px 10px; background:#667eea; color:white; border:none; border-radius:4px; font-size:12px;">Change Server IP</button>
+                    `;
+                    errorMsg.classList.add('show');
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }
+            }
+            
+
+
+            async setupCapacitor() {
+                // ... (rest of existing code) ...
+                try {
+                    // Initialize Status Bar
+                    if (window.CapacitorStatusBar && window.CapacitorStatusBar.setStyle) {
+                        await window.CapacitorStatusBar.setStyle({ style: 'dark' });
+                        await window.CapacitorStatusBar.setBackgroundColor({ color: '#667eea' });
+                    }
+
+                    // Setup hardware back button listener - THIS IS THE KEY FOR HARDWARE CONTROL
+                    if (window.CapacitorApp && window.CapacitorApp.addListener) {
+                        this.backButtonListener = await window.CapacitorApp.addListener('backButton', (data) => {
+                            this.handleHardwareBackButton(data);
+                        });
+                        console.log('✅ Hardware back button listener registered - FULL CONTROL ENABLED');
+                    } else {
+                        console.warn('⚠️ CapacitorApp not available');
+                    }
+                } catch (error) {
+                    console.error('Capacitor setup error:', error);
+                }
+            }
+
+            handleHardwareBackButton(data) {
+                if (this.isLocked) {
+                    // HARDWARE BACK BUTTON COMPLETELY BLOCKED - User cannot navigate away
+                    console.log('🔒 Hardware back button pressed but BLOCKED (screen is locked)');
+                    console.log('   → User stays on questions screen');
+                    
+                    // The listener prevents default behavior, so user stays on page
+                    // No action needed - Capacitor handles the blocking
+                    return;
+                } else {
+                    // When unlocked, allow normal back navigation
+                    console.log('🔓 Hardware back button pressed - allowing navigation');
+                    // Remove listener temporarily to allow default back behavior
+                    if (this.backButtonListener) {
+                        this.backButtonListener.remove();
+                        // Re-add after a short delay
+                        setTimeout(() => {
+                            this.setupCapacitor();
+                        }, 100);
+                    }
+                    // Allow default back navigation
+                    window.history.back();
+                }
+            }
+
+            // Fullscreen API
+            enterFullscreen() {
+                const doc = document.documentElement;
+                
+                // Try different fullscreen methods
+                if (doc.requestFullscreen) {
+                    doc.requestFullscreen().catch(err => console.log('Fullscreen error:', err));
+                } else if (doc.webkitRequestFullscreen) {
+                    doc.webkitRequestFullscreen();
+                } else if (doc.mozRequestFullScreen) {
+                    doc.mozRequestFullScreen();
+                } else if (doc.msRequestFullscreen) {
+                    doc.msRequestFullscreen();
+                }
+
+                // Add fullscreen class
+                document.body.classList.add('fullscreen');
+            }
+
+            // Lock/Unlock System
+            setupLockSystem() {
+                const lockButton = document.getElementById('lockButton');
+                
+                // Make lock button always accessible (even when locked)
+                lockButton.style.pointerEvents = 'all';
+                lockButton.style.zIndex = '10000';
+            }
+
+            async toggleLock() {
+                if (this.isLocked) {
+                    // UNLOCK: Show password prompt (require password to unlock)
+                    this.showPasswordPrompt();
+                } else {
+                    // LOCK: Lock immediately (no password needed to lock)
+                    this.lockScreen();
+                }
+            }
+
+            lockScreen() {
+                this.isLocked = true;
+                const lockButton = document.getElementById('lockButton');
+                const questionsContainer = document.getElementById('questionsContainer');
+
+                // LOCK MODE: Prevent navigation but allow questions
+                lockButton.textContent = '🔓';
+                lockButton.classList.add('locked');
+                
+                // CRITICAL: Ensure questions remain fully clickable
+                // No overlay modal - questions remain fully accessible
+                questionsContainer.style.pointerEvents = 'auto';
+                questionsContainer.style.zIndex = '10001';
+                
+                // Ensure all question items are clickable
+                const questionItems = questionsContainer.querySelectorAll('.question-item');
+                questionItems.forEach(item => {
+                    item.style.pointerEvents = 'auto';
+                    item.style.zIndex = '10002';
+                });
+                
+                document.body.style.overflow = 'hidden';
+                
+                // Store current URL to prevent navigation away
+                this.originalUrl = window.location.href;
+                
+                // Push state to prevent back button
+                window.history.pushState(null, null, window.location.href);
+                
+                console.log('🔒 Screen LOCKED - Back button disabled, questions ARE clickable (no modal shown)');
+            }
+
+            unlockScreen() {
+                this.isLocked = false;
+                const lockButton = document.getElementById('lockButton');
+                const questionsContainer = document.getElementById('questionsContainer');
+
+                // UNLOCK MODE: Allow normal navigation
+                lockButton.textContent = '🔒';
+                lockButton.classList.remove('locked');
+                questionsContainer.style.pointerEvents = 'auto';
+                document.body.style.overflow = 'auto';
+                
+                console.log('🔓 Screen UNLOCKED - Back button enabled');
+            }
+
+            showPasswordPrompt() {
+                const passwordPrompt = document.getElementById('passwordPrompt');
+                const passwordInput = document.getElementById('passwordInput');
+                const passwordError = document.getElementById('passwordError');
+                
+                // Add class to body to hide questions
+                document.body.classList.add('password-prompt-active');
+                
+                passwordPrompt.classList.add('active');
+                passwordError.classList.remove('show');
+                passwordInput.value = '';
+                
+                // Focus on input
+                setTimeout(() => {
+                    passwordInput.focus();
+                    passwordInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.verifyPassword();
+                        }
+                    });
+                }, 100);
+            }
+
+            cancelPasswordPrompt() {
+                const passwordPrompt = document.getElementById('passwordPrompt');
+                passwordPrompt.classList.remove('active');
+                // Remove class from body to show questions again
+                document.body.classList.remove('password-prompt-active');
+            }
+
+            async verifyPassword() {
+                const passwordInput = document.getElementById('passwordInput');
+                const passwordError = document.getElementById('passwordError');
+                const enteredPassword = passwordInput.value.trim();
+
+                if (!enteredPassword) {
+                    passwordError.textContent = 'Please enter a password';
+                    passwordError.classList.add('show');
+                    return;
+                }
+
+                // Load password from server
+                if (!this.unlockPassword) {
+                    await this.loadUnlockPassword();
+                }
+
+                if (enteredPassword === this.unlockPassword) {
+                    // Correct password - unlock
+                    this.cancelPasswordPrompt();
+                    this.unlockScreen();
+                } else {
+                    // Wrong password
+                    passwordError.textContent = 'Incorrect password. Please try again.';
+                    passwordError.classList.add('show');
+                    passwordInput.value = '';
+                    passwordInput.focus();
+                    // Keep password prompt active (don't remove class from body)
+                }
+            }
+
+            async loadUnlockPassword() {
+                if (!this.desktopIP) return;
+
+                try {
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/unlock-password`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        this.unlockPassword = data.password || '';
+                        console.log('✅ Unlock password loaded');
+                        // Store timestamp for real-time sync
+                        this.lastPasswordCheck = Date.now();
+                    } else {
+                        console.warn('⚠️ Could not load unlock password, using empty string');
+                        this.unlockPassword = '';
+                    }
+                } catch (error) {
+                    console.error('Error loading unlock password:', error);
+                    this.unlockPassword = '';
+                }
+            }
+            
+            async checkPasswordUpdate() {
+                if (!this.desktopIP || !this.lastPasswordCheck) return;
+                
+                try {
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/password-check?lastCheck=${this.lastPasswordCheck}`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        if (data.updated) {
+                            console.log('🔄 Password updated on server, reloading...');
+                            await this.loadUnlockPassword();
+                        }
+                    }
+                } catch (error) {
+                    // Silently fail - server might not be available
+                }
+            }
+
+            // Prevent Navigation - Blocks hardware back button when locked
+            preventNavigation() {
+                // Create a history entry to prevent back navigation
+                window.history.pushState(null, null, window.location.href);
+                
+                // Store original URL to prevent navigation away
+                this.originalUrl = window.location.href;
+
+                // CRITICAL: Prevent hardware back button (Android/iOS)
+                window.addEventListener('popstate', (e) => {
+                    if (this.isLocked) {
+                        // Immediately push state back to prevent navigation
+                        window.history.pushState(null, null, window.location.href);
+                        // Force stay on current page
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return false;
+                    } else {
+                        // When unlocked, allow normal back navigation
+                        window.history.pushState(null, null, window.location.href);
+                    }
+                }, false);
+
+                // Prevent page unload/close when locked
+                window.addEventListener('beforeunload', (e) => {
+                    if (this.isLocked) {
+                        e.preventDefault();
+                        e.returnValue = ''; // Chrome requires returnValue
+                        return ''; // Some browsers require return value
+                    }
+                });
+
+                // Monitor and prevent URL changes when locked
+                this.urlCheckInterval = setInterval(() => {
+                    if (this.isLocked) {
+                        // If URL changed, force it back
+                        if (window.location.href !== this.originalUrl) {
+                            window.history.replaceState(null, null, this.originalUrl);
+                            window.location.replace(this.originalUrl);
+                        }
+                        // Keep pushing state to prevent back button
+                        window.history.pushState(null, null, window.location.href);
+                    }
+                }, 50); // Check every 50ms for maximum security
+
+                // Prevent context menu when locked
+                document.addEventListener('contextmenu', (e) => {
+                    if (this.isLocked) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return false;
+                    }
+                }, false);
+
+                // Prevent text selection when locked
+                document.addEventListener('selectstart', (e) => {
+                    if (this.isLocked) {
+                        e.preventDefault();
+                        return false;
+                    }
+                }, false);
+
+                // Prevent drag when locked
+                document.addEventListener('dragstart', (e) => {
+                    if (this.isLocked) {
+                        e.preventDefault();
+                        return false;
+                    }
+                }, false);
+
+                // Prevent keyboard shortcuts when locked
+                document.addEventListener('keydown', (e) => {
+                    if (this.isLocked) {
+                        // Block ALL navigation keys
+                        if (['Backspace', 'F5', 'F11'].includes(e.key)) {
+                            // Check if backspace is not in an input field
+                            if (e.key === 'Backspace' && e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                return false;
+                            }
+                            if (e.key === 'F5' || e.key === 'F11') {
+                                e.preventDefault();
+                                return false;
+                            }
+                        }
+                        // Block common browser shortcuts
+                        if (e.ctrlKey || e.metaKey) {
+                            e.preventDefault();
+                            return false;
+                        }
+                    }
+                }, false);
+
+                // Android hardware back button support (if using WebView/Cordova)
+                document.addEventListener('backbutton', (e) => {
+                    if (this.isLocked) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        return false;
+                    }
+                }, false);
+
+                // Prevent hash changes when locked
+                window.addEventListener('hashchange', (e) => {
+                    if (this.isLocked) {
+                        window.location.hash = '';
+                        e.preventDefault();
+                        return false;
+                    }
+                }, false);
+
+                // Monitor page visibility - if user tries to switch apps/tabs when locked
+                document.addEventListener('visibilitychange', () => {
+                    if (this.isLocked && !document.hidden) {
+                        // User came back to the page - ensure we're still on the right URL
+                        if (window.location.href !== this.originalUrl) {
+                            window.location.replace(this.originalUrl);
+                        }
+                        // Push state again to prevent back button
+                        window.history.pushState(null, null, window.location.href);
+                    }
+                });
+
+                // Prevent navigation on window focus/blur when locked
+                window.addEventListener('focus', () => {
+                    if (this.isLocked) {
+                        // Ensure URL hasn't changed
+                        if (window.location.href !== this.originalUrl) {
+                            window.location.replace(this.originalUrl);
+                        }
+                        // Push state to prevent back button
+                        window.history.pushState(null, null, window.location.href);
+                    }
+                });
+
+                window.addEventListener('blur', () => {
+                    if (this.isLocked) {
+                        // Keep pushing state even when blurred
+                        window.history.pushState(null, null, window.location.href);
+                    }
+                });
+            }
+
+            async findDesktopIP() {
+                try {
+                    // 1. Try to get from URL (if running in browser from server)
+                    const hostname = window.location.hostname;
+                    if (hostname && hostname !== 'localhost' && hostname !== '127.0.0.1' && hostname !== '') {
+                        this.desktopIP = hostname.split(':')[0];
+                        localStorage.setItem('desktopIP', this.desktopIP); // Save it
+                        this.hideIPInput();
+                        await this.loadQuestions();
+                        return;
+                    }
+
+                    // 2. Try to get from localStorage (if native app or previously connected)
+                    const savedIP = localStorage.getItem('desktopIP');
+                    if (savedIP) {
+                        console.log('📱 Found saved IP:', savedIP);
+                        this.desktopIP = savedIP;
+                        this.hideIPInput();
+                        await this.loadQuestions();
+                        return;
+                    }
+                    
+                    // 3. Show input as last resort
+                    this.showIPInput();
+                    
+                } catch (error) {
+                    console.error('Error finding desktop IP:', error);
+                    this.showIPInput();
+                }
+            }
+
+            showIPInput() {
+                const ipContainer = document.getElementById('ipInputContainer');
+                ipContainer.classList.remove('hidden');
+                
+                // Auto-focus input
+                setTimeout(() => {
+                    const input = document.getElementById('manualIP');
+                    if (input) {
+                        input.focus();
+                        input.addEventListener('keypress', (e) => {
+                            if (e.key === 'Enter') {
+                                this.connectToManualIP();
+                            }
+                        });
+                    }
+                }, 100);
+            }
+
+            hideIPInput() {
+                const ipContainer = document.getElementById('ipInputContainer');
+                ipContainer.classList.add('hidden');
+            }
+
+            connectToManualIP() {
+                const ip = document.getElementById('manualIP').value.trim();
+                if (ip) {
+                    this.desktopIP = ip;
+                    localStorage.setItem('desktopIP', ip); // Save for next time
+                    this.hideIPInput();
+                    this.loadQuestions();
+                }
+            }
+
+            async loadQuestions() {
+                if (!this.desktopIP) return;
+
+                const container = document.getElementById('questionsContainer');
+                container.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading questions...</p>
+                    </div>
+                `;
+
+                try {
+                    // Load heading first
+                    await this.loadMobileHeading();
+                    
+                    // CHECK AUTH BEFORE LOADING DATA
+                    if (!this.checkAuth()) {
+                        console.log('🔒 Auth required - showing prompt');
+                        return; // Stop here, prompt is shown
+                    }
+
+                    // Load questions
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/questions`);
+                    
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    
+                    const data = await response.json();
+                    console.log('📥 Received questions data:', data);
+                    
+                    if (!Array.isArray(data)) {
+                        console.error('❌ Invalid response format - expected array, got:', typeof data, data);
+                        this.questions = [];
+                    } else {
+                        this.questions = data;
+                        console.log(`✅ Loaded ${this.questions.length} questions`);
+                    }
+                    
+                    this.displayQuestions();
+                    this.isConnected = true;
+                    
+                    // CHECK FOR AI BRAIN ACCESS
+                    // If user has 'gemma' or 'gemini', switch to Chat UI
+                    if (this.userModels && (this.userModels.includes('gemma') || this.userModels.includes('gemini'))) {
+                        console.log('🧠 AI Brain Access Detected - Switching to Chat Interface');
+                        document.getElementById('questionsContainer').style.display = 'none';
+                        document.getElementById('mobileHeading').classList.add('hidden');
+                        document.getElementById('chatContainer').classList.add('active');
+                    } else {
+                        // Default to Questions List
+                        document.getElementById('questionsContainer').style.display = 'flex';
+                        document.getElementById('chatContainer').classList.remove('active');
+                        this.loadMobileHeading();
+                    }
+
+                    // Load unlock password after questions are loaded
+                    await this.loadUnlockPassword();
+                } catch (error) {
+                    console.error('Error loading questions:', error);
+                    this.isConnected = false;
+                    
+                    // Show specific connection error instead of generic empty list
+                    container.innerHTML = `
+                        <div class="empty-message">
+                            <p style="font-size: 40px; margin-bottom: 20px;">📶</p>
+                            <h3>Connection Failed</h3>
+                            <p>Could not reach Desktop App at ${this.desktopIP}</p>
+                            <button onclick="mobileApp.showIPInput()" style="margin-top:20px; padding:10px 20px; background:#667eea; color:white; border:none; border-radius:8px; display:block; width:100%;">Change IP Address</button>
+                            <button onclick="mobileApp.loadQuestions()" style="margin-top:10px; padding:10px 20px; background:#28a745; color:white; border:none; border-radius:8px; display:block; width:100%;">Retry Connection</button>
+                            <br>
+                            <div style="font-size:12px; color:#999; margin-top:20px;">
+                                Debug: ${error.message}
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
+            async loadMobileHeading() {
+                if (!this.desktopIP) return;
+
+                try {
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/mobile-heading`);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        const heading = data.heading || '';
+                        const headingElement = document.getElementById('mobileHeading');
+                        const container = document.getElementById('questionsContainer');
+                        
+                        if (heading && heading.trim()) {
+                            // Show heading
+                            headingElement.textContent = heading.trim();
+                            headingElement.classList.remove('hidden');
+                            container.classList.add('with-heading');
+                            container.classList.add('with-copyright');
+                            console.log('✅ Mobile heading loaded:', heading);
+                        } else {
+                            // Hide heading - questions use full space
+                            headingElement.classList.add('hidden');
+                            container.classList.remove('with-heading');
+                            container.classList.add('with-copyright');
+                            console.log('ℹ️ No mobile heading set - questions use full space');
+                        }
+                    } else {
+                        // If API fails, hide heading
+                        const headingElement = document.getElementById('mobileHeading');
+                        const container = document.getElementById('questionsContainer');
+                        headingElement.classList.add('hidden');
+                        container.classList.remove('with-heading');
+                    }
+                } catch (error) {
+                    console.error('Error loading mobile heading:', error);
+                    // Hide heading on error
+                    const headingElement = document.getElementById('mobileHeading');
+                    const container = document.getElementById('questionsContainer');
+                    headingElement.classList.add('hidden');
+                    container.classList.remove('with-heading');
+                }
+            }
+
+            displayQuestions() {
+                const container = document.getElementById('questionsContainer');
+                
+                if (!this.questions || this.questions.length === 0) {
+                    const isLogged = this.userEmail ? true : false;
+                    container.innerHTML = `
+                        <div class="empty-message">
+                            <p>No questions available</p>
+                            <p style="font-size: 14px; color: #666; margin-top: 10px;">Please add questions on the desktop app</p>
+                            <div style="margin-top: 20px;">
+                                ${!isLogged ? `<button onclick="mobileApp.checkAuth()" style="background:#667eea; color:white; padding:10px 20px; border-radius:8px; border:none; margin-bottom:10px; width:100%;">Login to Desktop</button>` : ''}
+                                <button onclick="mobileApp.loadQuestions()" style="background:#28a745; color:white; padding:10px 20px; border-radius:8px; border:none; margin-bottom:10px; width:100%;">Refresh Questions</button>
+                                <button onclick="mobileApp.logout()" style="background:#dc3545; color:white; padding:10px 20px; border-radius:8px; border:none; width:100%;">Full Reset & Logout</button>
+                            </div>
+                        </div>
+                    `;
+                    console.warn('⚠️ No questions to display');
+                    return;
+                }
+
+                // Filter out any invalid questions
+                const validQuestions = this.questions.filter(q => q && q.question);
+                
+                if (validQuestions.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-message">
+                            <p>No valid questions found</p>
+                            <p style="font-size: 14px; color: #666; margin-top: 10px;">Please check question format</p>
+                        </div>
+                    `;
+                    console.warn('⚠️ No valid questions found');
+                    return;
+                }
+
+                console.log(`✅ Displaying ${validQuestions.length} questions`);
+                container.innerHTML = validQuestions.map((q, index) => `
+                    <div class="question-item" onclick="mobileApp.sendQuestion(${index})" style="pointer-events: auto; z-index: 10002;">
+                        <div class="question-text">${q.question || 'Untitled Question'}</div>
+                    </div>
+                `).join('');
+                
+                // Ensure all questions are clickable even when locked
+                const questionItems = container.querySelectorAll('.question-item');
+                questionItems.forEach(item => {
+                    item.style.pointerEvents = 'auto';
+                    item.style.zIndex = '10002';
+                });
+            }
+
+            async sendQuestion(index) {
+                // Questions are ALWAYS clickable, even when locked
+                // Only back button is disabled when locked
+                // Lock status does NOT prevent question clicks
+                
+                if (!this.desktopIP || !this.questions[index]) {
+                    console.warn('Cannot send question: missing desktopIP or question');
+                    return;
+                }
+
+                // Log that question is being sent (even if locked)
+                console.log(`📱 Sending question ${index} (locked: ${this.isLocked})`);
+
+                try {
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/ask`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            questionIndex: index,
+                            question: this.questions[index].question
+                        })
+                    });
+
+                    if (response.ok) {
+                        // Show success feedback
+                        const questionItem = document.querySelectorAll('.question-item')[index];
+                        if (questionItem) {
+                            questionItem.style.background = '#d4edda';
+                            questionItem.style.borderColor = '#28a745';
+                            
+                            setTimeout(() => {
+                                questionItem.style.background = 'white';
+                                questionItem.style.borderColor = '#e9ecef';
+                            }, 1000);
+                        }
+                        console.log('✅ Question sent successfully');
+                    }
+                } catch (error) {
+                    console.error('Error sending question:', error);
+                }
+            }
+
+            showError() {
+                const container = document.getElementById('questionsContainer');
+                container.innerHTML = `
+                    <div class="empty-message">
+                        <p>Connection failed. Please check IP address.</p>
+                    </div>
+                `;
+                
+                // Show IP input again after error
+                setTimeout(() => {
+                    this.showIPInput();
+                }, 2000);
+            }
+
+            setupEventListeners() {
+                // Allow Enter key to submit IP
+                const ipInput = document.getElementById('manualIP');
+                if (ipInput) {
+                    ipInput.addEventListener('keypress', (e) => {
+                        if (e.key === 'Enter') {
+                            this.connectToManualIP();
+                        }
+                    });
+                }
+
+                // Prevent default touch behaviors for better app-like experience
+                document.addEventListener('touchmove', (e) => {
+                    if (this.isLocked) {
+                        e.preventDefault();
+                    }
+                }, { passive: false });
+
+                // Prevent pull-to-refresh when locked
+                let touchStartY = 0;
+                document.addEventListener('touchstart', (e) => {
+                    if (this.isLocked) {
+                        touchStartY = e.touches[0].clientY;
+                    }
+                }, { passive: true });
+
+                document.addEventListener('touchmove', (e) => {
+                    if (this.isLocked && window.scrollY === 0 && e.touches[0].clientY > touchStartY) {
+                        e.preventDefault();
+                    }
+                }, { passive: false });
+            }
+
+            startConnectionCheck() {
+                // Auto-refresh questions and heading periodically
+                setInterval(() => {
+                    if (this.desktopIP && this.isConnected) {
+                        this.loadMobileHeading(); // Refresh heading
+                        this.loadQuestions(); // Refresh questions
+                        this.checkPasswordUpdate(); // Check for password updates
+                    }
+                }, 10000); // Check every 10 seconds
+            }
+            // --- CHAT FUNCTIONALITY ---
+            
+            setupSpeechRecognition() {
+                console.log('🎤 Checking Speech API support...');
+                const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                
+                if (SpeechRecognition) {
+                    console.log('✅ Speech API Supported:', SpeechRecognition.name);
+                    this.recognition = new SpeechRecognition();
+                    this.recognition.continuous = false;
+                    this.recognition.interimResults = false;
+                    this.recognition.lang = 'en-US';
+
+                    this.recognition.onstart = () => {
+                        console.log('🎤 Mic Started - Listening...');
+                        this.isListening = true;
+                        document.getElementById('micButton').classList.add('listening');
+                        this.lastInputMethod = 'voice'; 
+                    };
+
+                    this.recognition.onend = () => {
+                        console.log('🎤 Mic Ended/Stopped');
+                        this.isListening = false;
+                        document.getElementById('micButton').classList.remove('listening');
+                    };
+
+                    this.recognition.onresult = (event) => {
+                        const transcript = event.results[0][0].transcript;
+                        console.log('🎤 Result:', transcript);
+                        const input = document.getElementById('chatInput');
+                        input.value = transcript;
+                        this.lastInputMethod = 'voice'; 
+                        this.sendChatMessage();
+                    };
+                    
+                    this.recognition.onerror = (event) => {
+                        console.error('❌ Speech Error:', event.error);
+                        this.isListening = false;
+                        document.getElementById('micButton').classList.remove('listening');
+                        
+                        if (event.error === 'not-allowed') {
+                            alert('mic access denied. Check permissions.');
+                        } else if (event.error === 'service-not-allowed') {
+                            alert('Speech service not available. Ensure Google App is installed.');
+                        } else if (event.error === 'network') {
+                             alert('Network error - check connection.');
+                        }
+                    };
+                } else {
+                    console.warn('❌ Speech Recognition API MISSING in this browser');
+                }
+                
+                // Warn about HTTP with a visible UI Banner
+                if (window.location.protocol === 'http:' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                    console.warn('⚠️ WARNING: Running on HTTP. Mic requires HTTPS or chrome://flags configuration.');
+                    
+                    const banner = document.createElement('div');
+                    banner.id = 'ssl-warning';
+                    banner.style.cssText = `
+                        position: fixed;
+                        top: 0; left: 0; right: 0;
+                        background: #fff3cd;
+                        color: #856404;
+                        padding: 15px;
+                        font-size: 14px;
+                        z-index: 20000;
+                        border-bottom: 2px solid #ffeeba;
+                        text-align: left;
+                    `;
+                    banner.innerHTML = `
+                        <strong>🎤 Microphone Blocked?</strong><br>
+                        Browsers block microphones on HTTP connections (${window.location.hostname}).<br><br>
+                        <strong>To Fix (Android Chrome):</strong><br>
+                        1. Type <code>chrome://flags</code> in URL bar<br>
+                        2. Search <code>insecure origins</code><br>
+                        3. Enable it and add: <br>
+                        <code>http://${window.location.hostname}:3000</code><br>
+                        4. Relaunch Chrome.
+                        <button onclick="this.parentElement.remove()" style="margin-top:10px; padding:5px 10px; display:block; background:#856404; color:white; border:none; border-radius:4px;">Dismiss</button>
+                    `;
+                    document.body.appendChild(banner);
+                }
+                
+                // Track typing
+                const chatInput = document.getElementById('chatInput');
+                if (chatInput) {
+                    chatInput.addEventListener('input', () => {
+                        this.lastInputMethod = 'text';
+                    });
+                }
+            }
+
+            toggleMic() {
+                console.log('🎤 Toggle Mic Clicked. Listening:', this.isListening);
+                
+                if (!this.recognition) {
+                    alert('Mic not supported.');
+                    return;
+                }
+
+                if (this.isListening) {
+                    this.recognition.stop();
+                } else {
+                    try {
+                        console.log('🎤 Attempting to start Mic...');
+                        this.recognition.start();
+                    } catch (e) {
+                        console.error('❌ Start Failed:', e);
+                        alert('Mic Start Failed: ' + e.message);
+                    }
+                }
+            }
+
+            async sendChatMessage() {
+                const input = document.getElementById('chatInput');
+                const text = input.value.trim();
+                
+                if (!text) return;
+                
+                // Add User Message
+                this.addMessage(text, 'user');
+                input.value = '';
+
+                // Add loading indicator
+                const loadingId = this.addMessage('Thinking...', 'ai');
+
+                try {
+                    const response = await fetch(`http://${this.desktopIP}:3000/api/process-question`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ 
+                            question: text,
+                            history: [],
+                            inputType: this.lastInputMethod || 'text' // Send input type
+                        })
+                    });
+
+                    const data = await response.json();
+                    
+                    // Remove loading, add real answer
+                    const loadingMsg = document.querySelector(`.message.ai:last-child`);
+                    if (loadingMsg && loadingMsg.textContent === 'Thinking...') {
+                        loadingMsg.remove();
+                    }
+
+                    if (data.success && data.answer) {
+                        this.addMessage(data.answer, 'ai');
+                        // Speak only if server requested it (or default to true if missing? No, user wants control)
+                        // Actually, if legacy server, data.shouldSpeak might be undefined.
+                        // For now, respect explicit true.
+                        if (data.shouldSpeak) {
+                            this.speakAnswer(data.answer);
+                        }
+                    } else {
+                        this.addMessage('Sorry, I could not generate an answer.', 'ai');
+                    }
+
+                } catch (error) {
+                    console.error('Chat error:', error);
+                    const loadingMsg = document.querySelector(`.message.ai:last-child`);
+                    if (loadingMsg) loadingMsg.remove();
+                    this.addMessage('Connection error. Please try again.', 'ai');
+                }
+            }
+
+            addMessage(text, sender) {
+                const container = document.getElementById('chatMessages');
+                const msgDiv = document.createElement('div');
+                msgDiv.className = `message ${sender}`;
+                msgDiv.textContent = text;
+                container.appendChild(msgDiv);
+                container.scrollTop = container.scrollHeight;
+                return msgDiv;
+            }
+
+            speakAnswer(text) {
+                if ('speechSynthesis' in window) {
+                   const utterance = new SpeechSynthesisUtterance(text);
+                   window.speechSynthesis.speak(utterance);
+                }
+            }
+            async testAudioPermission() {
+                console.log('🎤 Testing raw Audio Permission...');
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    console.log('✅ Audio Permission GRANTED! Stream active.');
+                    alert('✅ Success! Microphone access is working.\n\nnow try the Mic button again.');
+                    
+                    // Stop tracks to release mic
+                    stream.getTracks().forEach(track => track.stop());
+                } catch (err) {
+                    console.error('❌ Audio Permission FAILED:', err);
+                    alert('❌ Microphone Test Failed:\n' + err.name + ': ' + err.message + '\n\nCheck Android Permission > Chrome > Microphone.');
+                }
+            }
+        }
+
+        // Initialize the mobile questions app
+        const mobileApp = new MobileQuestions();
+        window.mobileApp = mobileApp; 
+        
+        // Explicitly hide splash screen
+        window.addEventListener('load', async () => {
+            console.log('🚀 App Loaded (index.html)');
+            if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.SplashScreen) {
+                try {
+                    await window.Capacitor.Plugins.SplashScreen.hide();
+                    console.log('✅ Splash Screen hidden via Plugin');
+                } catch (e) {
+                    console.warn('Splash Screen hide warning:', e);
+                }
+            }
+        });
+    </script>
+</body>
+</html>

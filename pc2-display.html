@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PC2 Animation Display</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+
+        .animation-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        .video-wrapper {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transform-origin: center;
+        }
+
+        .animation-video {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            transition: object-fit 0.3s ease;
+        }
+
+        /* Status indicator - hidden by default */
+        .status-indicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            z-index: 100;
+        }
+
+        .status-visible {
+            opacity: 1;
+        }
+
+        /* Controls Help Overlay */
+        .controls-help {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 12px;
+            pointer-events: none;
+            z-index: 50;
+        }
+        
+        .animation-playing .controls-help {
+            opacity: 0; /* Hide help when playing */
+        }
+    </style>
+</head>
+<body id="body">
+    <div class="animation-container">
+        <!-- Wrapper for transform (Scale/Pan/Rotate) -->
+        <div class="video-wrapper" id="videoWrapper">
+            <video id="animationVideo" class="animation-video" muted loop playsinline>
+                <!-- No default sources - only play if primary is set -->
+                Your browser does not support video.
+            </video>
+        </div>
+
+        <!-- Status & Feedback Overlay -->
+        <div id="statusIndicator" class="status-indicator">
+            <div id="statusText">Ready</div>
+        </div>
+        
+        <div class="controls-help">
+            Keys: [+/-] Zoom • [Arrows] Pan • [F] Fit Mode • [R] Rotate • [0] Reset
+        </div>
+    </div>
+
+    <script>
+        class PC2Display {
+            constructor() {
+                this.video = document.getElementById('animationVideo');
+                this.wrapper = document.getElementById('videoWrapper');
+                this.statusEl = document.getElementById('statusIndicator');
+                this.statusText = document.getElementById('statusText');
+                this.body = document.getElementById('body');
+                
+                this.isPlaying = false;
+                this.isLoading = false;
+                
+                // Display Settings (Persisted)
+                this.settings = JSON.parse(localStorage.getItem('display_settings')) || {
+                    scale: 1,
+                    offsetX: 0,
+                    offsetY: 0,
+                    rotate: 0,
+                    fitMode: 'contain' // contain, cover, fill
+                };
+                
+                this.init();
+            }
+
+            init() {
+                this.applySettings();
+                this.setupVideo();
+                this.listenForTriggers();
+                this.setupControls();
+                
+                // Keep video visible but paused initially
+                this.video.pause();
+                this.video.currentTime = 0;
+            }
+
+            setupControls() {
+                window.addEventListener('keydown', (e) => {
+                    const step = e.shiftKey ? 10 : 1;
+                    const scaleStep = 0.05;
+                    let changed = false;
+                    let msg = '';
+
+                    switch(e.key.toLowerCase()) {
+                        case '=':
+                        case '+':
+                            this.settings.scale += scaleStep;
+                            msg = `Zoom: ${(this.settings.scale * 100).toFixed(0)}%`;
+                            changed = true;
+                            break;
+                        case '-':
+                        case '_':
+                            this.settings.scale = Math.max(0.1, this.settings.scale - scaleStep);
+                            msg = `Zoom: ${(this.settings.scale * 100).toFixed(0)}%`;
+                            changed = true;
+                            break;
+                        case 'arrowup':
+                            this.settings.offsetY -= step;
+                            msg = `Pan Y: ${this.settings.offsetY}`;
+                            changed = true;
+                            break;
+                        case 'arrowdown':
+                            this.settings.offsetY += step;
+                            msg = `Pan Y: ${this.settings.offsetY}`;
+                            changed = true;
+                            break;
+                        case 'arrowleft':
+                            this.settings.offsetX -= step;
+                            msg = `Pan X: ${this.settings.offsetX}`;
+                            changed = true;
+                            break;
+                        case 'arrowright':
+                            this.settings.offsetX += step;
+                            msg = `Pan X: ${this.settings.offsetX}`;
+                            changed = true;
+                            break;
+                        case 'r':
+                            this.settings.rotate = (this.settings.rotate + 90) % 360;
+                            msg = `Rotate: ${this.settings.rotate}°`;
+                            changed = true;
+                            break;
+                        case 'f':
+                            const modes = ['contain', 'cover', 'fill'];
+                            const idx = modes.indexOf(this.settings.fitMode);
+                            this.settings.fitMode = modes[(idx + 1) % modes.length];
+                            msg = `Fit: ${this.settings.fitMode.toUpperCase()}`;
+                            changed = true;
+                            break;
+                        case '0':
+                            this.settings = { scale: 1, offsetX: 0, offsetY: 0, rotate: 0, fitMode: 'contain' };
+                            msg = 'Reset Display';
+                            changed = true;
+                            break;
+                    }
+
+                    if (changed) {
+                        this.applySettings();
+                        this.saveSettings();
+                        this.showFeedback(msg);
+                    }
+                });
+            }
+
+            applySettings() {
+                // Apply object-fit to video
+                this.video.style.objectFit = this.settings.fitMode;
+                
+                // Apply Transform (Scale, Translate, Rotate) to Wrapper
+                // Note: Rotation happens typically before translation in many contexts, but for "Pan then Rotate" effect:
+                // We'll standardly Translate then Rotate then Scale
+                this.wrapper.style.transform = `
+                    translate(${this.settings.offsetX}px, ${this.settings.offsetY}px)
+                    rotate(${this.settings.rotate}deg)
+                    scale(${this.settings.scale})
+                `;
+            }
+
+            saveSettings() {
+                localStorage.setItem('display_settings', JSON.stringify(this.settings));
+            }
+
+            showFeedback(text) {
+                this.statusText.innerText = text;
+                this.statusEl.classList.add('status-visible');
+                
+                if (this.feedbackTimer) clearTimeout(this.feedbackTimer);
+                this.feedbackTimer = setTimeout(() => {
+                    this.statusEl.classList.remove('status-visible');
+                }, 1500);
+            }
+
+            setupVideo() {
+                this.video.addEventListener('loadeddata', () => {
+                    console.log('✅ Video loaded successfully');
+                });
+
+                this.video.addEventListener('play', () => {
+                    console.log(`[SYNC_DEBUG] 🎬 (${Date.now()}) Video STARTED Playing (Visible)`);
+                    this.isPlaying = true;
+                    this.isLoading = false;
+                    this.body.classList.add('animation-playing');
+                });
+
+                this.video.addEventListener('pause', () => {
+                    console.log(`[SYNC_DEBUG] ⏸️ (${Date.now()}) Video PAUSED`);
+                    this.isPlaying = false;
+                    this.body.classList.remove('animation-playing');
+                });
+
+                this.video.addEventListener('error', (e) => {
+                    console.error('Video error:', e);
+                    this.isLoading = false;
+                });
+            }
+
+            listenForTriggers() {
+                // Recursive polling to prevent request piling
+                const poll = () => {
+                    fetch('/api/animation-status')
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.action === 'start' && !this.isPlaying && !this.isLoading) {
+                                console.log(`[SYNC_DEBUG] 🚀 (${Date.now()}) 'Start' Signal Received`);
+                                this.startAnimation();
+                            } else if (data.action === 'stop' && this.isPlaying) {
+                                console.log(`[SYNC_DEBUG] 🛑 (${Date.now()}) 'Stop' Signal Received`);
+                                this.stopAnimation();
+                            }
+                        })
+                        .catch(err => {
+                            // Ignore errors
+                        })
+                        .finally(() => {
+                            setTimeout(poll, 30);
+                        });
+                };
+                
+                poll();
+            }
+
+            startAnimation() {
+                if (this.isLoading) return;
+                this.isLoading = true;
+                
+                this.loadPrimaryVideo().then((hasVideo) => {
+                    if (!hasVideo) {
+                        this.isLoading = false;
+                        return;
+                    }
+                    this.video.currentTime = 0;
+                    this.video.play().catch(err => {
+                        console.error('Play error:', err);
+                        this.isLoading = false;
+                    });
+                });
+            }
+            
+            loadPrimaryVideo() {
+                return fetch('/api/primary-video')
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.video) {
+                            // Determine correct path
+                            let correctPath = data.video.serverPath;
+                            if (!correctPath) {
+                                let filename = data.video.filename || data.video.name;
+                                if (data.video.path) {
+                                     // Handle full windows paths if they leaked here
+                                     filename = data.video.path.split(/[/\\]/).pop();
+                                }
+                                correctPath = `/assets/videos/${filename}`;
+                            }
+                            
+                            // Check if src actually changed to avoid reload
+                            // BUT: user might want restart.
+                            
+                            // Simple check:
+                            const currentSrc = this.video.querySelector('source')?.src;
+                            if (currentSrc && currentSrc.endsWith(correctPath)) {
+                                // Same video, just resolve
+                                return Promise.resolve(true);
+                            }
+
+                            this.video.innerHTML = '';
+                            const source = document.createElement('source');
+                            source.src = correctPath;
+                            source.type = data.video.type || 'video/mp4';
+                            this.video.appendChild(source);
+                            
+                            return new Promise((resolve) => {
+                                this.video.load();
+                                const onLoaded = () => { cleanup(); resolve(true); };
+                                const onError = () => { cleanup(); resolve(false); };
+                                const cleanup = () => {
+                                    this.video.removeEventListener('loadeddata', onLoaded);
+                                    this.video.removeEventListener('error', onError);
+                                };
+                                this.video.addEventListener('loadeddata', onLoaded, { once: true });
+                                this.video.addEventListener('error', onError, { once: true });
+                            });
+                        }
+                        return Promise.resolve(false);
+                    })
+                    .catch(() => Promise.resolve(false));
+            }
+
+            stopAnimation() {
+                this.video.pause();
+                this.video.currentTime = 0;
+                this.isPlaying = false;
+                this.body.classList.remove('animation-playing');
+            }
+        }
+
+        // Initialize
+        const display = new PC2Display();
+        window.pc2Display = display;
+
+        // Prevent context menu
+        document.addEventListener('contextmenu', e => e.preventDefault());
+    </script>
+</body>
+</html>
+

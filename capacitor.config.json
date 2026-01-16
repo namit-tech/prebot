@@ -1,0 +1,28 @@
+{
+  "appId": "com.offlineai.mobilequestions",
+  "appName": "AI Assistant Questions",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "plugins": {
+    "App": {
+      "launchUrl": "mobile-questions.html"
+    },
+    "Keyboard": {
+      "resize": "body",
+      "style": "dark",
+      "resizeOnFullScreen": true
+    },
+    "StatusBar": {
+      "style": "dark",
+      "backgroundColor": "#667eea"
+    }
+  }
+}

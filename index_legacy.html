@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Offline AI Assistant</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="assets/libs/three.min.js"></script>
+    <script src="assets/libs/xlsx.full.min.js"></script>
+    <style>
+        /* Desktop app specific styles */
+        body {
+            -webkit-user-select: none;
+            -webkit-app-region: no-drag;
+        }
+        
+        .question-btn, .control-btn {
+            -webkit-app-region: no-drag;
+        }
+        
+        .desktop-only {
+            display: block;
+        }
+        
+        .web-only {
+            display: none;
+        }
+        
+        @media (max-width: 768px) {
+            .desktop-only {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Login Modal -->
+    <div id="login-overlay" class="login-overlay">
+        <div class="login-modal">
+            <div class="login-header">
+                <h2>🔐 Login Required</h2>
+                <p>Please log in with your Admin credentials to activate the license.</p>
+            </div>
+            <div class="login-body">
+                <div class="input-group">
+                    <label for="login-email">Email Address</label>
+                    <input type="email" id="login-email" placeholder="admin@example.com" autocomplete="email">
+                </div>
+                <div class="input-group">
+                    <label for="login-password">Password</label>
+                    <div class="password-input-wrapper">
+                        <input type="password" id="login-password" placeholder="Enter password" autocomplete="current-password">
+                        <span class="password-toggle-icon" id="login-password-toggle">👁️</span>
+                    </div>
+                </div>
+                <div id="login-error" class="login-error hidden"></div>
+                <button id="login-btn" class="login-btn">
+                    <span id="login-btn-text">🚀 Login & Activate</span>
+                    <span id="login-loader" class="loader hidden"></span>
+                </button>
+            </div>
+            <div class="login-footer">
+                <p>Once activated, the app will work offline until the license expires.</p>
+                <div id="license-status" class="license-status hidden">
+                    <span class="status-icon">✅</span>
+                    <span id="license-expiry-text">Valid until: -</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container hidden" id="app-container">
+        <header>
+            <h1>🤖 Offline AI Assistant</h1>
+            <p>Click on any question to get an answer with AI animation</p>
+        </header>
+        
+        <div class="main-content">
+            <div class="ai-face-container">
+                <div id="ai-face" class="ai-face">
+                    <!-- Custom Animation Video -->
+                    <video id="animation-video" class="animation-video" preload="auto" muted loop>
+                        <source src="assets/videos/your-animation.mp4" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    
+                    <!-- Fallback AI Face (for browsers without video support) -->
+                    <div class="fallback-face">
+                        <div class="face">
+                            <div class="eyes">
+                                <div class="eye left-eye">
+                                    <div class="pupil"></div>
+                                </div>
+                                <div class="eye right-eye">
+                                    <div class="pupil"></div>
+                                </div>
+                            </div>
+                            <div class="mouth">
+                                <div class="mouth-shape"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div id="response-text" class="response-text"></div>
+            </div>
+            
+            <div class="questions-container">
+                <h2>Ask Me Anything:</h2>
+                <div id="questions-list" class="questions-list">
+                    <!-- Questions will be dynamically loaded here -->
+                </div>
+            </div>
+        </div>
+        
+        <div class="controls">
+            <button id="stop-btn" class="control-btn" disabled>Stop</button>
+            <button id="mute-btn" class="control-btn">🔊 Mute</button>
+            <button id="admin-toggle-btn" class="control-btn admin-btn">⚙️ Admin</button>
+            <div class="desktop-only">
+                <button id="minimize-btn" class="control-btn">➖ Minimize</button>
+                <button id="close-btn" class="control-btn">❌ Close</button>
+            </div>
+        </div>
+        
+        <!-- Admin Panel -->
+        <div id="admin-panel" class="admin-panel hidden">
+            <div class="admin-panel-layout">
+                <!-- Left Sidebar -->
+                <div class="admin-sidebar">
+                    <div class="admin-header">
+                        <h2>🔧 Admin Panel</h2>
+                        <button id="close-admin-btn" class="close-btn">❌</button>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>Quick Actions</h3>
+                        <div class="admin-actions">
+                            <button id="clear-all-btn" class="admin-action-btn danger">🗑️ Clear All</button>
+                            <button id="clear-storage-btn" class="admin-action-btn danger" style="background: linear-gradient(45deg, #e74c3c, #c0392b);">🗑️ Clear Storage</button>
+                            <button id="reset-to-default-btn" class="admin-action-btn warning">🔄 Start Fresh</button>
+                            <button id="export-questions-btn" class="admin-action-btn">📤 Export</button>
+                            <button id="import-questions-btn" class="admin-action-btn">📥 Import</button>
+                            <input type="file" id="import-file-input" accept=".json,.txt,.csv,.xlsx,.xls" style="display: none;">
+                            <div class="export-format-buttons" style="margin-top: 10px; display: flex; gap: 5px; flex-wrap: wrap;">
+                                <button id="export-json-btn" class="admin-action-btn" style="font-size: 12px; padding: 5px 10px;">📄 JSON</button>
+                                <button id="export-csv-btn" class="admin-action-btn" style="font-size: 12px; padding: 5px 10px;">📊 CSV</button>
+                                <button id="export-txt-btn" class="admin-action-btn" style="font-size: 12px; padding: 5px 10px;">📝 TXT</button>
+                                <button id="export-xlsx-btn" class="admin-action-btn" style="font-size: 12px; padding: 5px 10px;">📗 XLSX</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>Storage Status</h3>
+                        <div id="storage-status" class="storage-status">
+                            <div class="status-item">
+                                <span class="status-label">Questions:</span>
+                                <span id="questions-count" class="status-value">0</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Last Saved:</span>
+                                <span id="last-saved" class="status-value">Never</span>
+                            </div>
+                            <div class="status-item">
+                                <span class="status-label">Storage:</span>
+                                <span id="storage-type" class="status-value">LocalStorage</span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>📱 Mobile Display Settings</h3>
+                        <div class="input-group">
+                            <label for="mobile-heading">Heading for Mobile Questions Page:</label>
+                            <input type="text" id="mobile-heading" placeholder="Enter heading (e.g., 'Ask Me Anything')" autocomplete="off">
+                        </div>
+                        <button id="save-heading-btn" class="admin-action-btn" style="width: 100%;">💾 Save Heading</button>
+                        <small class="input-hint" style="display: block; margin-top: 8px;">
+                            This heading will be displayed at the top of the mobile questions page. Leave empty to use full space for questions.
+                        </small>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>🔒 Mobile Lock Password</h3>
+                        <div class="input-group">
+                            <label for="unlock-password">Password to unlock mobile screen:</label>
+                            <div class="password-input-wrapper">
+                                <input type="password" id="unlock-password" placeholder="Enter unlock password" autocomplete="off">
+                                <span class="password-toggle-icon" id="password-toggle-icon" title="Show/Hide Password">👁️</span>
+                            </div>
+                        </div>
+                        <button id="save-password-btn" class="admin-action-btn" style="width: 100%;">💾 Save Password</button>
+                        <small class="input-hint" style="display: block; margin-top: 8px;">
+                            This password is required to unlock the mobile screen when locked.
+                        </small>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>🎤 Voice & Speech Settings</h3>
+                        <div class="input-group">
+                            <label for="tts-voice-select">Voice:</label>
+                            <select id="tts-voice-select">
+                                <option value="">Loading voices...</option>
+                            </select>
+                        </div>
+                        <div class="input-group">
+                            <label for="tts-pitch-slider">Pitch: <span id="tts-pitch-value">1.0</span></label>
+                            <input type="range" id="tts-pitch-slider" min="0" max="2" step="0.1" value="1.0" class="slider-input">
+                            <small class="input-hint">Lower = Deeper, Higher = Higher</small>
+                        </div>
+                        <div class="input-group">
+                            <label for="tts-rate-slider">Speed: <span id="tts-rate-value">0.9</span></label>
+                            <input type="range" id="tts-rate-slider" min="0.1" max="2" step="0.1" value="0.9" class="slider-input">
+                            <small class="input-hint">0.1 = Very Slow, 2.0 = Very Fast</small>
+                        </div>
+                        <div class="input-group">
+                            <label for="tts-volume-slider">Volume: <span id="tts-volume-value">80%</span></label>
+                            <input type="range" id="tts-volume-slider" min="0" max="1" step="0.1" value="0.8" class="slider-input">
+                            <small class="input-hint">0% = Silent, 100% = Maximum</small>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-top: 12px;">
+                            <button id="test-voice-btn" class="admin-action-btn" style="flex: 1;">🎵 Test Voice</button>
+                            <button id="save-tts-settings-btn" class="admin-action-btn success" style="flex: 1;">💾 Save</button>
+                        </div>
+                        <small class="input-hint" style="display: block; margin-top: 8px;">
+                            Customize the voice, pitch, speed, and volume for text-to-speech.
+                        </small>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>🎬 Video Management</h3>
+                        <div style="margin-bottom: 10px;">
+                            <input type="file" id="video-upload-input" accept="video/*,.mp4,.avi,.mov,.wmv,.flv,.webm,.mkv,.m4v,.3gp,.ogv" multiple style="display: none;">
+                            <button id="upload-videos-btn" class="admin-action-btn" style="width: 100%; padding: 10px; font-size: 0.9rem; margin-bottom: 10px;">📤 Upload Videos</button>
+                            <small style="display: block; color: rgba(255, 255, 255, 0.8); font-size: 11px; margin-top: 5px;">Select multiple video files</small>
+                        </div>
+                        <div id="videos-list" class="videos-list">
+                            <!-- Videos will be listed here -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Right Content -->
+                <div class="admin-content">
+                    <div class="admin-section">
+                        <h3>Add New Question & Answer</h3>
+                        <div class="input-group">
+                            <label for="new-question">Question:</label>
+                            <textarea id="new-question" placeholder="Enter your question here..." rows="3" autocomplete="off" spellcheck="true"></textarea>
+                        </div>
+                        <div class="input-group">
+                            <label for="new-answer">Answer:</label>
+                            <textarea id="new-answer" placeholder="Enter the answer here..." rows="5" autocomplete="off" spellcheck="true"></textarea>
+                        </div>
+                        <div class="input-group">
+                            <label for="new-category">Category:</label>
+                            <input type="text" id="new-category" placeholder="e.g., Technology, Health, etc." autocomplete="off" spellcheck="true">
+                        </div>
+                        <button id="add-question-btn" class="admin-action-btn">➕ Add Question</button>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>Current Questions (Click to Edit)</h3>
+                        <div id="questions-list-admin" class="questions-list-admin">
+                            <!-- Questions will be loaded here -->
+                        </div>
+                    </div>
+                    
+                    <div class="admin-section">
+                        <h3>🎬 Video Library</h3>
+                        <p style="font-size: 12px; color: #666; margin-bottom: 10px;">
+                            Manage your animation videos. Set one as Primary to show on main screen.
+                        </p>
+                        <div id="video-library-list" class="video-library-list">
+                            <!-- Video library will be shown here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Import Validation Modal -->
+        <div id="import-validation-modal" class="import-modal hidden">
+            <div class="import-modal-content">
+                <div class="import-modal-header">
+                    <h2>📥 Import Validation</h2>
+                    <button id="close-import-modal" class="close-btn">❌</button>
+                </div>
+                <div class="import-modal-body">
+                    <div class="import-summary">
+                        <div class="summary-item">
+                            <span class="summary-label">File Format:</span>
+                            <span id="import-format" class="summary-value">-</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Total Rows Found:</span>
+                            <span id="import-total-rows" class="summary-value">0</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Valid Questions:</span>
+                            <span id="import-valid-count" class="summary-value success">0</span>
+                        </div>
+                        <div class="summary-item">
+                            <span class="summary-label">Invalid/Skipped:</span>
+                            <span id="import-invalid-count" class="summary-value error">0</span>
+                        </div>
+                    </div>
+                    <div class="import-preview">
+                        <h3>Preview (First 10 Questions):</h3>
+                        <div id="import-preview-list" class="import-preview-list">
+                            <!-- Preview items will be shown here -->
+                        </div>
+                    </div>
+                    <div class="import-actions">
+                        <button id="confirm-import-btn" class="admin-action-btn" style="background: #51cf66;">✅ Confirm Import</button>
+                        <button id="cancel-import-btn" class="admin-action-btn" style="background: #6c757d;">❌ Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="questions-data.js"></script>
+    <script src="tts.js"></script>
+    <script src="ai-animation.js"></script>
+    <script src="admin-panel.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

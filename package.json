@@ -1,0 +1,65 @@
+{
+  "name": "prebot",
+  "version": "1.0.0",
+  "main": "main.js",
+  "description": "PreBot - MERN Stack Offline AI Assistant",
+  "scripts": {
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install && cd ../electron && npm install",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:electron": "cd electron && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "cd electron && npm run build",
+    "init:modules": "cd backend && npm run init:modules",
+    "deploy:vps": "cd backend && ./deploy.sh",
+    "build-win": "electron-builder --win portable"
+  },
+  "keywords": [
+    "mern",
+    "electron",
+    "ai",
+    "assistant"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/app": "^6.0.3",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1",
+    "@capacitor/haptics": "^6.0.3",
+    "@capacitor/keyboard": "^6.0.4",
+    "@capacitor/status-bar": "^6.0.3",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "pdf-parse": "^2.2.4",
+    "three": "^0.182.0",
+    "uuid": "^9.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "appId": "com.prebot.offline",
+    "productName": "Offline AI Assistant",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!backend",
+      "!frontend",
+      "!electron",
+      "!screens",
+      "!*.md",
+      "!*.bat",
+      "!dist"
+    ],
+    "win": {
+      "target": "portable",
+      "icon": "assets/icon.ico"
+    }
+  }
+}
