@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useModule } from '../../context/ModuleContext';
+import { useAuth } from '../../context/AuthContext';
 import * as XLSX from 'xlsx';
 
 const PredefinedAdmin = () => {
   const { getModuleInstance } = useModule();
+  const { user } = useAuth();
   const [questions, setQuestions] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -13,11 +15,19 @@ const PredefinedAdmin = () => {
     category: 'General'
   });
 
+  // Determine if user has AI Brain (Gemma/Gemini)
+  // If they do, they don't need to provide 'Answers' (AI will generate them)
+  const hasAIBrain = (user?.models || []).some(m => 
+    ['gemma', 'gemini'].includes(m.toLowerCase())
+  );
+
   const predefinedModule = getModuleInstance('predefined');
 
   useEffect(() => {
-    loadQuestions();
-  }, []);
+    if (predefinedModule) {
+      loadQuestions();
+    }
+  }, [predefinedModule]);
 
   const loadQuestions = () => {
     if (predefinedModule) {
@@ -28,18 +38,26 @@ const PredefinedAdmin = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     
+    if (!predefinedModule) {
+      alert('Error: Q&A System is still initializing. Please wait a moment.');
+      return;
+    }
+    
     try {
+      // If AI Brain is present, answer is optional/ignored but we send empty string to avoid DB errors
+      const answerVal = hasAIBrain ? (formData.answer || 'AI Brain') : formData.answer;
+
       if (editingId) {
         await predefinedModule.updateQuestion(
           editingId,
           formData.question,
-          formData.answer,
+          answerVal,
           formData.category
         );
       } else {
         await predefinedModule.addQuestion(
           formData.question,
-          formData.answer,
+          answerVal,
           formData.category
         );
       }
@@ -107,10 +125,10 @@ const PredefinedAdmin = () => {
             for (const row of data) {
                 // Determine fields (case-insensitive fallback)
                 const q = row.question || row.Question || row.QUESTION;
-                const a = row.answer || row.Answer || row.ANSWER;
+                const a = row.answer || row.Answer || row.ANSWER || (hasAIBrain ? 'AI Brain' : '');
                 const c = row.category || row.Category || row.CATEGORY || 'General';
 
-                if (q && a) {
+                if (q && (hasAIBrain || a)) {
                     await predefinedModule.addQuestion(q, a, c);
                     addedCount++;
                 }
@@ -134,7 +152,11 @@ const PredefinedAdmin = () => {
   const handleDownloadTemplate = (format) => {
     // structured data with headers and one example row
     const data = [
-        { Question: "What is your return policy?", Answer: "You can return items within 30 days.", Category: "Support" }
+        { 
+          Question: "What is your return policy?", 
+          ...(hasAIBrain ? {} : { Answer: "You can return items within 30 days." }),
+          Category: "Support" 
+        }
     ];
     const ws = XLSX.utils.json_to_sheet(data);
     const wb = XLSX.utils.book_new();
@@ -201,17 +223,19 @@ const PredefinedAdmin = () => {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Answer
-            </label>
-            <textarea
-              value={formData.answer}
-              onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
-              className="input-field min-h-[100px]"
-              required
-            />
-          </div>
+          {!hasAIBrain && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Answer
+              </label>
+              <textarea
+                value={formData.answer}
+                onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
+                className="input-field min-h-[100px]"
+                required
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -245,7 +269,7 @@ const PredefinedAdmin = () => {
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <p className="font-semibold text-gray-900">{q.question}</p>
-                  <p className="text-sm text-gray-600 mt-1">{q.answer}</p>
+                  {!hasAIBrain && <p className="text-sm text-gray-600 mt-1">{q.answer}</p>}
                   <span className="inline-block mt-2 px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
                     {q.category}
                   </span>

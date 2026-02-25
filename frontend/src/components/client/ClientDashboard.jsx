@@ -5,27 +5,27 @@ import SubscriptionStatus from '../dashboard/SubscriptionStatus';
 import ModuleSelector from '../dashboard/ModuleSelector';
 import VideoManagement from './VideoManagement';
 import QAManagement from './QAManagement';
+import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib } from 'react-icons/fa';
+import AISystemInstructions from './AISystemInstructions';
 import VoiceSettings from './VoiceSettings';
 import { isElectron } from '../../utils/electron';
-import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp } from 'react-icons/fa';
 
 const ClientDashboard = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('modules');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [localIp, setLocalIp] = useState(null);
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
   const isDesktop = isElectron();
   
+  const { activeModule, loadModule, processQuestion } = useModule(); 
+
   useEffect(() => {
-    // FIX: Match casing from preload.js (getLocalIP)
     if (isDesktop && window.electronAPI && window.electronAPI.getLocalIP) {
         window.electronAPI.getLocalIP().then(ip => {
-            console.log('[Dashboard] Local IP:', ip);
             setLocalIp(ip);
-        }).catch(err => {
-            console.error('[Dashboard] Failed to get IP:', err);
-            setLocalIp('Error');
-        });
+        }).catch(err => console.error('[Dashboard] Failed to get IP:', err));
     }
   }, [isDesktop]);
   
@@ -33,11 +33,9 @@ const ClientDashboard = () => {
     let mounted = true;
     let retryTimer = null;
 
-    let retryCount = 0;
     const syncSession = async () => {
       if (!user || !window.electronAPI || !window.electronAPI.setUserSession) return;
       
-      const attemptId = ++retryCount;
       try {
         const sessionPayload = {
           email: user.email,
@@ -45,320 +43,303 @@ const ClientDashboard = () => {
           expiryDate: localStorage.getItem('expiry_date') || null,
           models: user.models || []
         };
-        
-        console.log(`[${new Date().toISOString()}] 🔄 Sync Attempt #${attemptId}: Sending session payload:`, sessionPayload);
-        
         const result = await window.electronAPI.setUserSession(sessionPayload);
-
-        console.log(`[${new Date().toISOString()}] ℹ️ Sync Attempt #${attemptId} Response:`, result);
-
-        if (result && result.success) {
-          console.log(`✅ [${new Date().toISOString()}] Session Synced Successfully!`);
-        } else {
-          console.warn(`⚠️ [${new Date().toISOString()}] Desktop Server not ready (Attempt #${attemptId}). Retrying in 5s...`);
-          if (mounted) {
-            retryTimer = setTimeout(syncSession, 5000);
-          }
-        }
-      } catch (error) {
-        console.error(`❌ [${new Date().toISOString()}] Sync Attempt #${attemptId} FAILED:`, error);
-        if (mounted) {
+        if (!result?.success && mounted) {
           retryTimer = setTimeout(syncSession, 5000);
         }
+      } catch (error) {
+        if (mounted) retryTimer = setTimeout(syncSession, 5000);
       }
     };
 
     syncSession();
-
     return () => {
       mounted = false;
       if (retryTimer) clearTimeout(retryTimer);
     };
   }, [user]);
 
-  // Handle Mobile Chat Requests Globally (Background Processing)
-  const { activeModule, loadModule, processQuestion } = useModule(); 
-  
-  // Use Refs to keep listener stable (avoid re-registering)
-  const activeModuleRef = React.useRef(activeModule);
-  const userRef = React.useRef(user);
-  
-  // Update refs when state changes
-  useEffect(() => {
-    activeModuleRef.current = activeModule;
-    userRef.current = user;
-  }, [activeModule, user]);
-  
-  useEffect(() => {
-    // Listener for mobile AI requests (Stable Instance)
-    const handleMobileRequest = async (data) => {
-        console.log('📱 [ClientDashboard] Received Mobile Request:', data);
-        const { requestId, question: mobileQuestion, inputType } = data; // inputType from mobile
+  // Shared response logic (Video + TTS)
+  const handleDesktopActions = async (answer, inputType) => {
+    try {
+        const voiceSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+        const mode = voiceSettings.interactionMode || 'adaptive';
+        let shouldSpeak = (mode === 'always_speak') || (mode === 'adaptive' && inputType === 'voice');
 
-        try {
-            // 1. Check/Wake Module using Ref
-            let currentModule = activeModuleRef.current;
-            const currentUser = userRef.current;
+        const storedVideos = JSON.parse(localStorage.getItem('videos') || '[]');
+        const primaryId = localStorage.getItem('primary_video');
+        const primaryVideo = storedVideos.find(v => v.id == primaryId);
+
+        if (primaryVideo && window.electronAPI?.playHologramVideo) {
+            window.electronAPI.playHologramVideo(primaryVideo);
+        }
+
+        if (shouldSpeak) {
+            window.speechSynthesis.cancel();
+            const isPiperVoice = voiceSettings.voice?.includes('lessac') || voiceSettings.voice?.includes('kusal') || voiceSettings.voice?.startsWith('Piper');
+            const cleaned = cleanTextForTTS(answer);
+
+            if (isPiperVoice && window.electronAPI?.generateSpeech) {
+                const res = await window.electronAPI.generateSpeech(cleaned, voiceSettings.voice);
+                if (res.success && res.audioPath) {
+                    const audio = new Audio(`file://${res.audioPath}`);
+                    if (voiceSettings.volume) audio.volume = Math.min(voiceSettings.volume, 1.0);
+                    audio.onended = () => window.electronAPI?.stopHologramVideo();
+                    audio.play().catch(console.error);
+                    return;
+                }
+            }
             
-            if (!currentModule) {
-                console.log('💤 No active module, auto-loading "gemma"...');
-                
-                // Check if user has gemma or gemini
-                const models = currentUser?.models || [];
-                const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
-                
-                if (targetModel) {
-                    console.log(`[SYNC_DEBUG] Auto-loading detected model: ${targetModel}`);
-                    const loadResult = await loadModule(targetModel);
-                    if (loadResult.success) {
-                        currentModule = targetModel;
-                        // Note: activeModuleRef will update in next render, but we have local var
-                        console.log('✅ Auto-loaded module successfully:', targetModel);
-                    } else {
-                        throw new Error(`Failed to auto-load AI: ${loadResult.error}`);
-                    }
-                } else {
-                    throw new Error('No compatible AI model found in subscription');
-                }
+            const utter = new SpeechSynthesisUtterance(cleaned);
+            utter.onend = () => window.electronAPI?.stopHologramVideo();
+            if (voiceSettings.voice) {
+                const selected = window.speechSynthesis.getVoices().find(v => v.name === voiceSettings.voice);
+                if (selected) utter.voice = selected;
             }
+            window.speechSynthesis.speak(utter);
+        } else {
+            setTimeout(() => window.electronAPI?.stopHologramVideo(), 5000);
+        }
+    } catch (e) {
+        console.warn('Action Error:', e);
+    }
+  };
 
-            // Process Question
-            // Wait a moment for initialization if we just loaded
-            if (!activeModuleRef.current) {
-               await new Promise(r => setTimeout(r, 1000)); // Increased wait
-            }
+  const cleanTextForTTS = (text) => {
+    if (!text) return '';
+    // Strip bold/italic markdown symbols like * and _
+    // Also remove common AI markdown headers and horizontal rules
+    return text
+        .replace(/[*_~`]/g, '') // Remove * _ ~ `
+        .replace(/#+\s/g, '')   // Remove headers like # or ## 
+        .replace(/-{3,}/g, '')  // Remove horizontal rules ---
+        .replace(/\n\s*\n/g, '. ') // Replace double newlines with a period and space for natural pause
+        .trim();
+  };
 
-            const result = await processQuestion(mobileQuestion);
-            const answer = result.success ? result.answer : "I'm sorry, I encountered an error processing that.";
+  const handleInteractionRequest = async (data) => {
+    const { requestId, question, inputType, answer: providedAnswer, triggerVideo } = data;
+    const isAIModule = activeModule === 'gemma' || activeModule === 'gemini';
+    
+    try {
+        if ((providedAnswer || triggerVideo) && !isAIModule) {
+            await handleDesktopActions(providedAnswer || "Processing...", inputType || 'text');
+            return;
+        }
 
-            // Determine Interaction Mode
-            let shouldSpeak = false;
-            try {
-                const voiceSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
-                const mode = voiceSettings.interactionMode || 'adaptive';
-                
-                // Default inputType to 'text' if undefined
-                const effectiveInputType = inputType || 'text';
-                
-                if (mode === 'always_speak') {
-                    shouldSpeak = true;
-                } else if (mode === 'adaptive') {
-                    // Speak if input was voice
-                    if (effectiveInputType === 'voice') {
-                        shouldSpeak = true;
-                    }
-                }
-                
-                console.log(`🗣️ Interaction Mode: ${mode}, Input: ${effectiveInputType} => Speak: ${shouldSpeak}`);
-
-                // TRIGGER DESKTOP ACTIONS (Video + TTS)
-                
-                // 1. Play Primary Video
-                const storedVideos = JSON.parse(localStorage.getItem('videos') || '[]');
-                const primaryId = localStorage.getItem('primary_video');
-                const primaryVideo = storedVideos.find(v => v.id == primaryId);
-
-                if (primaryVideo && window.electronAPI && window.electronAPI.playHologramVideo) {
-                    console.log(`[SYNC_DEBUG] 🎬 Triggering Primary Video: ${primaryVideo.name}`);
-                    window.electronAPI.playHologramVideo(primaryVideo);
-                }
-
-                // 2. Desktop TTS
-                if (shouldSpeak) {
-                    console.log(`[SYNC_DEBUG] 🔊 Preparing Desktop TTS`);
-                    window.speechSynthesis.cancel();
-
-                    const isPiperVoice = voiceSettings.voice && (
-                        voiceSettings.voice.includes('lessac') || 
-                        voiceSettings.voice.includes('kusal') || 
-                        voiceSettings.voice.startsWith('Piper')
-                    );
-
-                    if (isPiperVoice && window.electronAPI && window.electronAPI.generateSpeech) {
-                        console.log(`[SYNC_DEBUG] ⚡ Using Piper Neural TTS`);
-                        window.electronAPI.generateSpeech(answer, voiceSettings.voice)
-                            .then(result => {
-                                if (result.success && result.audioPath) {
-                                    const audio = new Audio(`file://${result.audioPath}`);
-                                    if (voiceSettings.volume) audio.volume = Math.min(voiceSettings.volume, 1.0);
-                                    if (voiceSettings.rate) audio.playbackRate = voiceSettings.rate;
-
-                                    // Predictive Early Stop
-                                    const earlyStopInterval = setInterval(() => {
-                                        if (audio.duration && audio.currentTime > 0) {
-                                            const remaining = audio.duration - audio.currentTime;
-                                            if (audio.duration > 2 && remaining < 0.3) {
-                                                console.log(`[SYNC_DEBUG] ⚡ Early Stop Triggered`);
-                                                if (window.electronAPI && window.electronAPI.stopHologramVideo) {
-                                                    window.electronAPI.stopHologramVideo();
-                                                }
-                                                clearInterval(earlyStopInterval);
-                                            }
-                                        }
-                                    }, 100);
-
-                                    audio.onended = () => {
-                                        clearInterval(earlyStopInterval);
-                                        console.log(`[SYNC_DEBUG] ✅ Piper Audio ENDED`);
-                                        if (window.electronAPI && window.electronAPI.stopHologramVideo) {
-                                            window.electronAPI.stopHologramVideo();
-                                        }
-                                    };
-                                    
-                                    audio.play().catch(console.error);
-                                }
-                            })
-                            .catch(console.error);
-                        return;
-                    }
-                    
-                    // STANDARD BROWSER TTS (Fallback)
-                    const utterance = new SpeechSynthesisUtterance(answer);
-                    utterance.onend = () => {
-                        console.log(`[SYNC_DEBUG] ✅ TTS ENDED`);
-                        if (window.electronAPI && window.electronAPI.stopHologramVideo) {
-                            window.electronAPI.stopHologramVideo();
-                        }
-                    };
-                    
-                    if (voiceSettings.voice) {
-                        const voices = window.speechSynthesis.getVoices();
-                        const selectedVoice = voices.find(v => v.name === voiceSettings.voice);
-                        if (selectedVoice) utterance.voice = selectedVoice;
-                    }
-                    if (voiceSettings.rate) utterance.rate = voiceSettings.rate;
-                    if (voiceSettings.pitch) utterance.pitch = voiceSettings.pitch;
-                    if (voiceSettings.volume) utterance.volume = voiceSettings.volume;
-
-                    window.speechSynthesis.speak(utterance);
-                } else {
-                    // No speech, stop video timeout
-                    setTimeout(() => {
-                         if (window.electronAPI && window.electronAPI.stopHologramVideo) {
-                            window.electronAPI.stopHologramVideo();
-                        }
-                    }, 5000);
-                }
-
-            } catch (e) {
-                console.warn('[SYNC_DEBUG] Error in action trigger:', e);
-            }
-
-            // Send back to server (CRITICAL)
-            if (window.electronAPI && window.electronAPI.sendAIResponse) {
-                window.electronAPI.sendAIResponse({ 
-                    requestId, 
-                    answer, 
-                    shouldSpeak 
-                });
-            }
-
-        } catch (err) {
-            console.error('❌ Error handling mobile request:', err);
-            // Always respond with error
-            if (window.electronAPI && window.electronAPI.sendAIResponse) {
-                window.electronAPI.sendAIResponse({ 
-                    requestId, 
-                    answer: `Error: ${err.message || "I'm sorry, I encountered an error."}` 
-                });
+        let currentModule = activeModule;
+        if (!currentModule) {
+            const models = user?.models || [];
+            const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
+            if (targetModel) {
+                const loadResult = await loadModule(targetModel);
+                if (loadResult.success) currentModule = targetModel;
             }
         }
-    };
 
-    if (window.electronAPI && window.electronAPI.onMobileChatRequest) {
-        console.log('🎧 Registering Global Mobile Chat Listener (Stable)');
-        const unsubscribe = window.electronAPI.onMobileChatRequest(handleMobileRequest);
-        
-        let unsubscribeSimple = null;
-        if (window.electronAPI.onMobileQuestion) {
-             console.log('🎧 Registering Global Mobile Question Listener (Stable)');
-             unsubscribeSimple = window.electronAPI.onMobileQuestion((data) => {
-                 console.log('[SYNC_DEBUG] 📱 ClientDashboard received simple mobile question:', data);
-                 handleMobileRequest({
-                    requestId: 'simple-' + Date.now(),
-                    question: data.question,
-                    inputType: 'text'
-                });
-             });
+        await new Promise(r => setTimeout(r, 600));
+        const result = await processQuestion(question);
+        const finalAnswer = result.success ? result.answer : "I couldn't process that request.";
+
+        await handleDesktopActions(finalAnswer, inputType || 'text');
+
+        if (window.electronAPI?.sendAIResponse && requestId) {
+            window.electronAPI.sendAIResponse({ requestId, answer: finalAnswer, shouldSpeak: true });
         }
+    } catch (err) {
+        console.error('Request Error:', err);
+    }
+  };
+
+  // Option 2: PC Voice implementation
+  const toggleVoiceAssistant = async () => {
+    if (isListening) {
+        if (window.electronAPI?.stopSTT) {
+            await window.electronAPI.stopSTT();
+            setIsListening(false);
+        }
+    } else {
+        if (window.electronAPI?.startSTT) {
+            await window.electronAPI.startSTT();
+            setIsListening(true);
+        } else {
+            alert("Offline Voice Assistant is only available on the Desktop application.");
+        }
+    }
+  };
+
+  useEffect(() => {
+    if (window.electronAPI) {
+        const unsubText = window.electronAPI.onSTTText((text) => {
+            console.log('[OfflineVoice] Recognized:', text);
+            handleInteractionRequest({ 
+                requestId: `pc-voice-${Date.now()}`, 
+                question: text, 
+                inputType: 'voice' 
+            });
+        });
+
+        const unsubStatus = window.electronAPI.onSTTStatus((status) => {
+            console.log('[OfflineVoice] Status:', status);
+            if (status === 'LISTENING') setIsListening(true);
+            if (status === 'STOPPED' || status === 'OFFLINE') setIsListening(false);
+        });
+
+        const unsubError = window.electronAPI.onSTTError((err) => {
+            console.error('[OfflineVoice] Error:', err);
+            // alert(`Voice Error: ${err}`);
+            setIsListening(false);
+        });
+
+        const unsubLevel = window.electronAPI.onSTTLevel((level) => {
+            console.log(`[OfflineVoice] Mic Level: ${level}%`);
+        });
+
+        const unsubDiag = window.electronAPI.onSTTDiag((msg) => {
+            console.log(`[OfflineVoice-DIAG] ${msg}`);
+        });
 
         return () => {
-            console.log('🔌 Unregistering Mobile Listeners');
-            if (unsubscribe) unsubscribe();
-            if (unsubscribeSimple) unsubscribeSimple();
+            unsubText();
+            unsubStatus();
+            unsubError();
+            unsubLevel();
+            unsubDiag();
         };
     }
-  }, []); // Empty dependency array = Stable Listener
+  }, [activeModule, user]);
 
-  // Get purchased modules to filter tabs
-  const purchasedModels = user?.models || [];
-  const hasPredefined = purchasedModels.includes('predefined');
+  useEffect(() => {
+    if (window.electronAPI?.onMobileChatRequest) {
+        const unsubChat = window.electronAPI.onMobileChatRequest(handleInteractionRequest);
+        const unsubSimple = window.electronAPI?.onMobileQuestion 
+            ? window.electronAPI.onMobileQuestion((data) => {
+                if (data.answer || !data.requestId) {
+                    handleInteractionRequest({ ...data, requestId: data.requestId || `sq-${Date.now()}` });
+                }
+            }) : null;
 
-  const allTabs = [
+        return () => {
+            if (unsubChat) unsubChat();
+            if (unsubSimple) unsubSimple();
+        };
+    }
+  }, [activeModule, user]);
+
+  useEffect(() => {
+    return () => {
+        if (window.electronAPI?.stopSTT) {
+            window.electronAPI.stopSTT();
+        }
+    };
+  }, []);  useEffect(() => {
+    if (mobileSyncEnabled && window.electronAPI?.setMobilePresetsEnabled) {
+      window.electronAPI.setMobilePresetsEnabled(true);
+    }
+  }, []);
+
+  const voiceSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+  const mobileSyncEnabled = voiceSettings.enableMobilePresets === true;
+  
+  const hasPredefined = (user?.models || []).includes('predefined') || user?.role === 'superadmin' || isDesktop;
+  const showQATab = hasPredefined || mobileSyncEnabled;
+
+  const isAIAuthorized = (user?.models || []).includes('gemma') || (user?.models || []).includes('gemini') || user?.role === 'superadmin';
+  const aiName = isAIAuthorized ? 'AI' : 'Predefined';
+
+  const tabs = [
     { id: 'modules', name: 'AI Modules', icon: <FaRobot /> },
     { id: 'videos', name: 'Videos', icon: <FaVideo /> },
-    { id: 'qa', name: 'Q&A', icon: <FaQuestionCircle />, requiredModule: 'predefined' },
+    { id: 'instructions', name: 'Instructions', icon: <FaPenNib />, show: isAIAuthorized },
+    { id: 'qa', name: 'Q&A', icon: <FaQuestionCircle />, show: showQATab },
     { id: 'voice', name: 'Voice', icon: <FaVolumeUp /> }
-  ];
+  ].filter(t => t.show !== false);
 
-  // Filter tabs based on module access
-  const tabs = allTabs.filter(tab => {
-    if (tab.requiredModule && !hasPredefined) return false;
-    return true;
-  });
+  const handleTabChange = async (tabId) => {
+    setActiveTab(tabId);
+    if (tabId === 'qa' && loadModule) {
+      console.log('🔄 [Dashboard] Switching to Q&A tab - Activating Predefined Module');
+      await loadModule('predefined');
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className={`bg-white shadow-sm ${isDesktop ? 'border-b border-gray-200' : ''}`}>
+      {isListening && (
+        <div className="fixed top-24 left-1/2 -translate-x-1/2 z-50">
+            <div className="bg-red-600 text-white px-8 py-4 rounded-2xl shadow-2xl flex items-center gap-4 animate-pulse border-4 border-red-400">
+                <div className="w-4 h-4 bg-white rounded-full animate-ping"></div>
+                <span className="text-xl font-black tracking-tighter">{aiName.toUpperCase()} IS LISTENING...</span>
+            </div>
+        </div>
+      )}
+
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-                <FaRobot className="text-blue-600" />
-                PreBot Client
-              </h1>
-              <p className="text-sm text-gray-600">
-                Welcome, {user?.companyName || user?.email}
-                {isDesktop && <span className="ml-2 text-xs text-gray-400">(PC App)</span>}
-              </p>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-white rounded-2xl shadow-md border border-gray-100 flex items-center justify-center overflow-hidden transition-transform hover:scale-105">
+                <img src="assets/icon-extracted.png" alt="Logo" className="w-10 h-10 object-contain" onError={(e) => {
+                    e.target.style.display = 'none';
+                    e.target.nextSibling.style.display = 'flex';
+                }} />
+                <div className="hidden w-full h-full items-center justify-center bg-blue-600 text-white font-bold text-xl">AI</div>
+              </div>
+              <div>
+                <h1 className="text-xl font-black bg-gradient-to-r from-blue-700 to-indigo-700 bg-clip-text text-transparent leading-none">PREBOT CONTROL</h1>
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mt-1">Unified Agentic Interface</p>
+              </div>
             </div>
-            
-            {/* IP Address Display */}
-            {isDesktop && (
-                <div className="hidden md:block bg-blue-50 px-4 py-2 rounded-lg border border-blue-100">
-                    <p className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Mobile Access IP</p>
-                    <p className="text-lg font-bold text-blue-800 font-mono">
-                        {localIp || 'Loading...'}
-                    </p>
-                </div>
-            )}
 
-            <button
-              onClick={logout}
-              className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-            >
-              Logout
-            </button>
+            <div className="flex items-center gap-6">
+              {/* Option 2: Live Mic Interaction */}
+              {isAIAuthorized && (
+                <button 
+                  onClick={toggleVoiceAssistant}
+                  className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black transition-all shadow-md active:scale-95 ${
+                      isListening 
+                      ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)] animate-pulse'
+                      : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-lg'
+                  }`}
+                >
+                  {isListening ? <FaStop /> : <FaMicrophone />}
+                  <span>{isListening ? `STOP ${aiName.toUpperCase()}` : 'VOICE ASSISTANT'}</span>
+                </button>
+              )}
+
+              <div className="h-8 w-px bg-gray-200"></div>
+
+              {localIp && (
+                <div className="flex flex-col items-end">
+                  <span className="text-[9px] uppercase tracking-[0.2em] text-gray-400 font-black mb-1">Mobile Sync</span>
+                  <div className="flex items-center gap-3 bg-slate-50 px-4 py-1.5 rounded-xl border border-gray-200 shadow-inner">
+                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(34,197,94,0.6)]"></span>
+                    <span className="text-sm font-mono font-black text-slate-700 tracking-tighter">{localIp}</span>
+                  </div>
+                </div>
+              )}
+              
+              <button onClick={logout} className="ml-2 p-2.5 bg-gray-100 text-gray-600 rounded-xl hover:bg-gray-200 transition-colors shadow-sm">
+                 <FaRobot className="text-xl" />
+              </button>
+            </div>
           </div>
         </div>
       </header>
-
-      {/* Tabs */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <nav className="flex space-x-8">
+      <div className="bg-white border-b border-gray-200 sticky top-[81px] z-30">
+        <div className="max-w-7xl mx-auto px-4">
+          <nav className="flex space-x-12">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
+                onClick={() => handleTabChange(tab.id)}
+                className={`py-5 px-2 border-b-4 font-black text-xs uppercase tracking-widest flex items-center transition-all ${
                   activeTab === tab.id
-                    ? 'border-blue-500 text-blue-600'
-                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-gray-400 hover:text-gray-600'
                 }`}
               >
-                <span className="mr-2 text-lg">{tab.icon}</span>
+                <span className="mr-3 text-lg opacity-80">{tab.icon}</span>
                 {tab.name}
               </button>
             ))}
@@ -366,19 +347,15 @@ const ClientDashboard = () => {
         </div>
       </div>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         {activeTab === 'modules' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <div className="lg:col-span-1">
-              <SubscriptionStatus />
-            </div>
-            <div className="lg:col-span-2">
-              <ModuleSelector />
-            </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1"><SubscriptionStatus /></div>
+            <div className="lg:col-span-2"><ModuleSelector /></div>
           </div>
         )}
         {activeTab === 'videos' && <VideoManagement />}
+        {activeTab === 'instructions' && <AISystemInstructions />}
         {activeTab === 'qa' && <QAManagement />}
         {activeTab === 'voice' && <VoiceSettings />}
       </main>
@@ -387,9 +364,3 @@ const ClientDashboard = () => {
 };
 
 export default ClientDashboard;
-
-
-
-
-
-

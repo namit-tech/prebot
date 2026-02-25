@@ -11,9 +11,9 @@ class ModuleGemma extends BaseModule {
   constructor() {
     super({
       id: 'gemma',
-      name: 'Gemma 2 9B AI Brain',
+      name: 'Offline AI Brain',
       version: '1.0.0',
-      requiresNetwork: false // Works offline with Ollama
+      requiresNetwork: false // Works offline
     });
     this.ollamaUrl = 'http://localhost:11434';
     this.modelName = 'gemma2:9b';
@@ -28,9 +28,10 @@ class ModuleGemma extends BaseModule {
       if (!isAvailable) {
         return { 
           success: false, 
-          error: 'Ollama is not running. Setup required.',
+          error: 'AI Engine is not ready. Setup required.',
           code: 'REQUIRES_SETUP',
           requiresOllama: true,
+          suggestWizard: true, // Trigger setup wizard UI
           setupInstructions: this.getSetupInstructions()
         };
       }
@@ -41,9 +42,10 @@ class ModuleGemma extends BaseModule {
       if (!availableModel) {
         return {
           success: false,
-          error: 'Gemma 2 model not found. Please install gemma2:2b (Fast) or gemma2:9b.',
+          error: 'Intelligence model not found. System setup required.',
           code: 'REQUIRES_SETUP',
           requiresModel: true,
+          suggestWizard: true, // Trigger setup wizard UI
           setupInstructions: this.getSetupInstructions()
         };
       }
@@ -61,11 +63,13 @@ class ModuleGemma extends BaseModule {
   }
 
   async checkOllamaAvailable() {
-    // If running in Electron with the new API
-    if (window.electronAPI && window.electronAPI.ollamaCheck) {
+    if (window.electronAPI && window.electronAPI.ollamaCheckSetup) {
       try {
-        const result = await window.electronAPI.ollamaCheck();
-        return result.installed;
+        const preferredModel = localStorage.getItem('ai_model') || 'gemma2:2b';
+        const result = await window.electronAPI.ollamaCheckSetup(preferredModel);
+        console.log('[GemmaModule] IPC Ollama Check Result:', result);
+        // We consider it available if it's running and API is responding
+        return result.success && result.configured;
       } catch (e) {
         console.warn('Electron Ollama check failed:', e);
       }
@@ -83,37 +87,57 @@ class ModuleGemma extends BaseModule {
   }
 
   async checkModelAvailable() {
+    // 1. Try using the new Electron API first (Recommended)
+    if (window.electronAPI && window.electronAPI.ollamaVerify) {
+      try {
+        console.log('[GemmaModule] Using IPC for model verification...');
+        const verifyResult = await window.electronAPI.ollamaVerify();
+        if (verifyResult.success && verifyResult.models && verifyResult.models.length > 0) {
+            const models = verifyResult.models;
+            console.log('[GemmaModule] IPC Available Ollama Models:', models);
+            
+            // Check for Admin Preferred Model
+            const preferredModel = localStorage.getItem('ai_model');
+            if (preferredModel) {
+                const match = models.find(m => m.includes(preferredModel));
+                if (match) return match;
+            }
+
+            // Fallback priorities
+            if (models.some(m => m.includes('gemma2:2b'))) return models.find(m => m.includes('gemma2:2b'));
+            if (models.some(m => m.includes('gemma2:9b'))) return models.find(m => m.includes('gemma2:9b'));
+            if (models.some(m => m.includes('gemma2'))) return models.find(m => m.includes('gemma2'));
+            
+            return models[0]; // Any model is better than none
+        }
+      } catch (e) {
+        console.warn('Electron Model verification failed:', e);
+      }
+    }
+
+    // 2. Fallback to fetch (Might fail in some environments)
     try {
       const response = await fetch(`${this.ollamaUrl}/api/tags`);
       const data = await response.json();
       const models = data.models || [];
-      console.log('🤖 [GemmaModule] Available Ollama Models:', models.map(m => m.name));
+      console.log('[GemmaModule] Fetch Available Ollama Models:', models.map(m => m.name));
       
-      // 1. Check for Admin Preferred Model
+      const modelNames = models.map(m => m.name);
+      
       const preferredModel = localStorage.getItem('ai_model');
-      console.log(`📋 [GemmaModule] Preferred Model from LocalStorage: "${preferredModel}"`);
-
       if (preferredModel) {
-          const match = models.find(m => m.name.includes(preferredModel));
-          if (match) {
-              console.log(`✅ [GemmaModule] Found match for preferred: ${match.name}`);
-              return match.name;
-          } else {
-              console.warn(`❌ [GemmaModule] Preferred model "${preferredModel}" NOT found in Ollama!`);
-          }
+          const match = modelNames.find(name => name.includes(preferredModel));
+          if (match) return match;
       }
 
-      // 2. Fallback: Prioritize Gemma 2 2B (Faster)
-      const fastModel = models.find(m => m.name.includes('gemma2:2b'));
-      if (fastModel) return fastModel.name;
+      const fastModel = modelNames.find(name => name.includes('gemma2:2b'));
+      if (fastModel) return fastModel;
 
-      // 3. Fallback: Gemma 2 9B (Smarter but Slower)
-      const smartModel = models.find(m => m.name.includes('gemma2:9b'));
-      if (smartModel) return smartModel.name;
+      const smartModel = modelNames.find(name => name.includes('gemma2:9b'));
+      if (smartModel) return smartModel;
 
-      // 4. Fallback: Any gemma2
-      const anyGemma = models.find(m => m.name.includes('gemma2'));
-      if (anyGemma) return anyGemma.name;
+      const anyGemma = modelNames.find(name => name.includes('gemma2'));
+      if (anyGemma) return anyGemma;
 
       return null;
     } catch (error) {
@@ -123,11 +147,11 @@ class ModuleGemma extends BaseModule {
 
   getSetupInstructions() {
     return {
-      step1: 'Install Ollama from https://ollama.com',
-      step2: 'Open terminal/command prompt',
-      step3: 'Run: ollama pull gemma2:2b',
-      step4: 'Wait for download to complete (~1.5GB)',
-      step5: 'Restart this application. (gemma2:2b is 5x faster than 9b)'
+      step1: 'Initialize AI Core',
+      step2: 'Wait for model processing',
+      step3: 'Downloading intelligence data...',
+      step4: 'Finalizing configuration',
+      step5: 'Restart the application to apply changes.'
     };
   }
 
@@ -150,10 +174,10 @@ class ModuleGemma extends BaseModule {
         source: 'gemma2'
       };
     } catch (error) {
-      console.error('Gemma/Ollama error:', error);
+      console.error('AI Brain error:', error);
       return {
         success: false,
-        error: error.message || 'Failed to get response from Gemma',
+        error: 'Failed to get response from AI Brain',
         retryable: true
       };
     }
@@ -165,7 +189,10 @@ class ModuleGemma extends BaseModule {
 
   async processWithOllama(question) {
     const noEmoji = "Do not use emojis in your response. Keep the tone professional.";
-    let prompt = `Instructions: ${noEmoji}\n\nQuestion: ${question}`;
+    const userContext = localStorage.getItem('ai_system_instructions') || "";
+    let prompt = `Instructions: ${noEmoji}\n`;
+    if (userContext) prompt += `System Instructions: ${userContext}\n`;
+    prompt += `\nQuestion: ${question}`;
     
     // Inject Foundation Frame (Knowledge Base) if exists
     if (this.systemContext) {
@@ -173,8 +200,11 @@ class ModuleGemma extends BaseModule {
                `--- BEGIN REFERENCE ---\n${this.systemContext}\n--- END REFERENCE ---\n\n` +
                `Instructions: Answer the user's question based primarily on the reference material above. ` +
                `If the answer is not in the reference, you may use your general knowledge but mention that it's outside the provided context.\n` +
-               `IMPORTANT: ${noEmoji}\n\n` +
-               `Question: ${question}`;
+               `IMPORTANT: ${noEmoji}\n`;
+
+      if (userContext) prompt += `System Instructions: ${userContext}\n`;
+      
+      prompt += `\nQuestion: ${question}`;
     }
 
     // DYNAMIC CHECK: Update model preference if changed in settings/localStorage
@@ -184,7 +214,7 @@ class ModuleGemma extends BaseModule {
         this.modelName = preferredModel;
     }
 
-    console.log(`🧠 [GemmaModule] Generating response using model: ${this.modelName}`);
+    console.log('[GemmaModule] Generating response using model: ', this.modelName);
 
     const response = await fetch(`${this.ollamaUrl}/api/generate`, {
       method: 'POST',

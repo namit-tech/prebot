@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Assistant</title>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        * {
+            box-sizing: border-box;
+            user-select: none; /* Prevent text selection */
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent; /* Remove blue highlight on tap */
+        }
+        
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            color: #ffffff;
+            font-family: 'Segoe UI', sans-serif;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Minimalist Audio Interface */
+        .audio-interface {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            max-width: 500px;
+            height: 100%;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            position: relative;
+        }
+
+        /* Status Indicator */
+        .status-indicator {
+            position: absolute;
+            top: 20%;
+            color: #ef4444;
+            font-size: 18px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        
+        .status-indicator.visible {
+            opacity: 1;
+        }
+
+        /* Central Input/Transcript Area */
+        .input-display {
+            width: 100%;
+            margin-bottom: 60px;
+            text-align: center;
+        }
+
+        #chatInput {
+            width: 100%;
+            background: transparent;
+            border: none;
+            color: #fff;
+            font-size: 28px;
+            text-align: center;
+            outline: none;
+            resize: none;
+            height: 150px;
+            font-family: 'Segoe UI', sans-serif;
+            line-height: 1.4;
+        }
+
+        #chatInput::placeholder {
+            color: #555;
+        }
+
+        /* Controls Container */
+        .audio-controls {
+            display: flex;
+            align-items: center;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        /* Large Mic Button */
+        .mic-button-large {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: #667eea;
+            border: none;
+            color: white;
+            font-size: 50px;
+            cursor: pointer;
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+        }
+
+        .mic-button-large:active {
+            transform: scale(0.95);
+        }
+
+        .mic-button-large.listening {
+            background: #ef4444;
+            animation: pulse-ring 2s infinite;
+            box-shadow: 0 10px 25px rgba(239, 68, 68, 0.4);
+        }
+
+        @keyframes pulse-ring {
+            0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            70% { box-shadow: 0 0 0 30px rgba(239, 68, 68, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+        }
+
+        /* Send Button */
+        .action-button {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: #333;
+            border: none;
+            color: #ccc;
+            font-size: 24px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .action-button:hover {
+            background: #444;
+            color: white;
+        }
+
+        .action-button:active {
+            transform: scale(0.95);
+        }
+
+        /* Logout Button (Top Right) */
+        .logout-btn {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background: rgba(220, 53, 69, 0.8);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+            border: none;
+            z-index: 1000;
+            cursor: pointer;
+        }
+
+        /* Login Overlay */
+        .login-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.95);
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+        
+        .login-overlay.active { display: flex; }
+
+        .login-box {
+            background: #222;
+            padding: 30px;
+            border-radius: 15px;
+            width: 85%;
+            max-width: 350px;
+            text-align: center;
+            border: 1px solid #444;
+        }
+
+        .login-box input {
+            width: 100%;
+            padding: 15px;
+            margin: 15px 0;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+
+        .login-btn {
+            width: 100%;
+            padding: 15px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        /* Debug Console (Hidden) */
+        #debugConsole {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            height: 150px;
+            background: rgba(0,0,0,0.8);
+            color: lime;
+            font-family: monospace;
+            padding: 10px;
+            overflow-y: auto;
+            z-index: 9999;
+            font-size: 10px;
+        }
+        .debug-toggle {
+            position: fixed;
+            bottom: 10px; right: 10px;
+            width: 30px; height: 30px;
+            opacity: 0.2;
+            background: transparent;
+            border: none;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Logout -->
+    <button class="logout-btn" onclick="mobileApp.logout()">Logout</button>
+
+    <!-- Main Audio Interface -->
+    <div class="audio-interface">
+        
+        <!-- Status -->
+        <div class="status-indicator" id="statusIndicator">
+            <i class="fas fa-wave-square"></i> Listening...
+        </div>
+
+        <!-- Transcript Display -->
+        <div class="input-display">
+            <textarea id="chatInput" placeholder="Tap mic to speak..."></textarea>
+        </div>
+
+        <!-- Controls -->
+        <div class="audio-controls">
+            <!-- Mic -->
+            <button class="mic-button-large" id="micButton">
+                <i class="fas fa-microphone"></i>
+            </button>
+            
+            <!-- Send -->
+            <button class="action-button" onclick="mobileApp.sendChatMessage()">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Login Overlay -->
+    <!-- Login Overlay -->
+    <div class="login-overlay" id="loginOverlay">
+        <div class="login-box">
+            <h3 style="margin-top:0">Login Required</h3>
+            <p style="color:#aaa; font-size:14px">Enter your desktop email</p>
+            
+             <!-- Manual IP Input -->
+            <input type="text" id="loginIP" placeholder="Server IP (e.g. 192.168.1.10)" value="10.0.2.2" style="background:#444; color:white; margin-bottom:5px; border:1px solid #666;">
+            <p style="font-size:10px; color:#888; margin-bottom:15px; text-align:left;">* 10.0.2.2 for Emulator, 192.x.x.x for WiFi</p>
+
+            <input type="email" id="loginEmail" placeholder="Email Address">
+            <button class="login-btn" onclick="mobileApp.login()">Connect</button>
+            <p id="loginError" style="color:#ef4444; margin-top:10px; font-size:14px; display:none"></p>
+        </div>
+    </div>
+
+    <!-- Debug Console -->
+    <div id="debugConsole"></div>
+    <button class="debug-toggle" onclick="document.getElementById('debugConsole').style.display = 'block'"></button>
+
+    <!-- Scripts -->
+    <script src="capacitor-mobile.js"></script>
+    <script src="mobile-bridge-bundle.js"></script>
+
+    <script>
+        // --- Debug Logging ---
+        function log(msg, type='info') {
+            const consoleEl = document.getElementById('debugConsole');
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            entry.style.color = type === 'error' ? '#ff6b6b' : '#0f0';
+            consoleEl.prepend(entry);
+            console.log(msg);
+        }
+
+        class MobileApp {
+            constructor() {
+                this.desktopIP = null;
+                this.userEmail = localStorage.getItem('mobile_auth_email');
+                this.isListening = false;
+                
+                // Bind UI
+                this.micBtn = document.getElementById('micButton');
+                this.statusInd = document.getElementById('statusIndicator');
+                this.chatInput = document.getElementById('chatInput');
+                
+                // Setup Listeners
+                this.micBtn.addEventListener('click', () => this.toggleMic());
+                
+                this.init();
+            }
+
+            async init() {
+                log('🚀 Mobile App Initializing...');
+                
+                // Restore IP
+                const savedIP = localStorage.getItem('mobile_host_ip');
+                if(savedIP) {
+                    this.desktopIP = savedIP;
+                    log('Using saved IP: ' + savedIP);
+                }
+                
+                // 1. Check Auth
+                if (!this.userEmail) {
+                    this.showLogin();
+                } else {
+                     if (!this.desktopIP) await this.findDesktopIP();
+                }
+
+                // 2. Setup Mic (Capacitor)
+                this.setupSpeech();
+            }
+
+            setupSpeech() {
+                if (window.CapacitorSpeech) {
+                    log('✅ Capacitor Speech Plugin Available');
+                    // ...
+                } else {
+                    log('⚠️ Capacitor Speech Plugin MISSING', 'error');
+                }
+            }
+
+            async toggleMic() {
+                if (this.isListening) {
+                    await this.stopListening();
+                } else {
+                    await this.startListening();
+                }
+            }
+
+            async startListening() {
+                try {
+                    this.isListening = true;
+                    this.updateUI(true);
+                    
+                    if (window.CapacitorSpeech) {
+                        window.CapacitorSpeech.start({
+                            language: "en-US",
+                            maxResults: 1,
+                            prompt: "Speak now..."
+                        }).then(result => {
+                            if (result && result.matches && result.matches.length > 0) {
+                                this.chatInput.value = result.matches[0];
+                            }
+                        }).catch(err => {
+                             log('Mic Error: ' + JSON.stringify(err), 'error');
+                             this.stopListening();
+                        });
+                    } else {
+                        alert('Native Mic not available in browser.');
+                        this.stopListening();
+                    }
+                } catch (e) {
+                    log('Start Mic Failed: ' + e.message, 'error');
+                    this.stopListening();
+                }
+            }
+
+            async stopListening() {
+                this.isListening = false;
+                this.updateUI(false);
+                if (window.CapacitorSpeech) {
+                    try { window.CapacitorSpeech.stop(); } catch(e){}
+                }
+            }
+
+            updateUI(listening) {
+                if (listening) {
+                    this.micBtn.classList.add('listening');
+                    this.statusInd.classList.add('visible');
+                    this.statusInd.innerHTML = '<i class="fas fa-wave-square"></i> Listening...';
+                } else {
+                    this.micBtn.classList.remove('listening');
+                    this.statusInd.classList.remove('visible');
+                }
+            }
+
+            async sendChatMessage() {
+                const text = this.chatInput.value.trim();
+                if (!text) return;
+                
+                if (!this.desktopIP) {
+                    await this.findDesktopIP();
+                    if (!this.desktopIP) {
+                        alert('No connection to Desktop');
+                        return;
+                    }
+                }
+
+                log('📤 Sending: ' + text);
+                
+                try {
+                    const res = await fetch(`http://${this.desktopIP}:3000/api/chat`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: text,
+                            email: this.userEmail,
+                            model: "gemini" // Default
+                        })
+                    });
+                    
+                    if (res.ok) {
+                        this.chatInput.value = ''; // Clear
+                        log('✅ Sent successfully');
+                    } else {
+                        log('❌ Send failed: ' + res.status, 'error');
+                    }
+                } catch (e) {
+                    log('❌ Network Error: ' + e.message, 'error');
+                }
+            }
+
+            // --- Connectivity & Auth ---
+
+            async findDesktopIP() {
+                log('🔍 Scanning for Desktop...');
+                
+                const candidates = ['10.0.2.2', '192.168.1.10', '192.168.1.100', '192.168.29.184']; 
+                // Add saved IP to candidates if exists
+                if(this.desktopIP && !candidates.includes(this.desktopIP)) {
+                     candidates.unshift(this.desktopIP);
+                }
+
+                for (const ip of candidates) {
+                    try {
+                        const controller = new AbortController();
+                        setTimeout(() => controller.abort(), 1000);
+                        const res = await fetch(`http://${ip}:3000/api/health`, { signal: controller.signal });
+                        if (res.ok) {
+                            this.desktopIP = ip;
+                            log('✅ Connected into ' + ip);
+                            return ip;
+                        }
+                    } catch (e) { }
+                }
+                log('❌ Could not find Desktop automatically', 'warn');
+            }
+
+            async login() {
+                const email = document.getElementById('loginEmail').value;
+                const ip = document.getElementById('loginIP').value.trim();
+                const errorMsg = document.getElementById('loginError');
+
+                if(!email) return alert('Enter email');
+                
+                // Set Manual IP if provided
+                if(ip) {
+                    this.desktopIP = ip;
+                }
+                
+                if (!this.desktopIP) await this.findDesktopIP();
+                
+                if (!this.desktopIP) {
+                    errorMsg.textContent = 'Cannot connect. Check IP Address.';
+                    errorMsg.style.display = 'block';
+                    return;
+                }
+
+                try {
+                     const res = await fetch(`http://${this.desktopIP}:3000/api/mobile-login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        this.userEmail = email;
+                        localStorage.setItem('mobile_auth_email', email);
+                        localStorage.setItem('mobile_host_ip', this.desktopIP);
+                        
+                        document.getElementById('loginOverlay').classList.remove('active');
+                        log('✅ Logged in as ' + email);
+                    } else {
+                        document.getElementById('loginError').textContent = data.message || 'Login failed';
+                        document.getElementById('loginError').style.display = 'block';
+                    }
+                } catch (e) {
+                     alert('Login error: ' + e.message);
+                }
+            }
+
+            showLogin() {
+                document.getElementById('loginOverlay').classList.add('active');
+            }
+
+            logout() {
+                localStorage.removeItem('mobile_auth_email');
+                localStorage.removeItem('mobile_host_ip');
+                location.reload();
+            }
+        }
+
+        // Start
+        window.mobileApp = new MobileApp();
+    </script>
+</body>
+</html>

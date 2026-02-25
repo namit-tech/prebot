@@ -1,5 +1,7 @@
 const { app, BrowserWindow, Menu, shell, ipcMain } = require('electron');
 const path = require('path');
+const ollamaSetup = require('./ollama-setup');
+const { startEmbeddedBackend, stopEmbeddedBackend } = require('./embedded-backend');
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
@@ -28,8 +30,9 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools();
   } else {
-    // Production: Load from built files
-    mainWindow.loadFile(path.join(__dirname, '../frontend/dist/index.html'));
+    // Production: Load from extraResources
+    const indexPath = path.join(process.resourcesPath, 'frontend/dist/index.html');
+    mainWindow.loadFile(indexPath);
   }
 
   // Show window when ready
@@ -54,9 +57,31 @@ function createWindow() {
 }
 
 // App event handlers
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createWindow();
   createMenu();
+
+  // Auto-start Embedded Backend
+  console.log('🚀 Starting embedded backend...');
+  try {
+    const port = await startEmbeddedBackend();
+    console.log(`✅ Embedded backend ready on port ${port}`);
+  } catch (err) {
+    console.error('❌ Failed to start embedded backend:', err);
+  }
+
+  // Auto-start Ollama Service
+  console.log('🚀 Auto-starting Ollama service...');
+  ollamaSetup.restartOllama((msg) => {
+      console.log(`[OllamaAutoStart] ${msg}`);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ollama-log', msg);
+      }
+  }).then(() => {
+      console.log('✅ Ollama auto-start initiated');
+  }).catch(err => {
+      console.error('❌ Failed to auto-start Ollama:', err);
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -165,7 +190,6 @@ function createMenu() {
 // IPC handlers for Electron-specific features
 const os = require('os');
 const fs = require('fs').promises;
-const path = require('path');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const execAsync = promisify(exec);
@@ -344,5 +368,32 @@ ipcMain.handle('stop-hologram-video', async () => {
 ipcMain.handle('get-hologram-status', async () => {
   // Check if HDMI output is available (simplified check)
   return { isConnected: true }; // In production, check actual HDMI connection
+});
+
+// Ollama Setup handlers
+
+ipcMain.handle('ollama:check-setup', async (event) => {
+  const logger = (msg) => event.sender && event.sender.send('ollama-log', msg);
+  return await ollamaSetup.checkOllamaSetup(logger);
+});
+
+ipcMain.handle('ollama:configure', async (event) => {
+  const logger = (msg) => event.sender && event.sender.send('ollama-log', msg);
+  return await ollamaSetup.configureOllama(logger);
+});
+
+ipcMain.handle('ollama:verify', async (event) => {
+  const logger = (msg) => event.sender && event.sender.send('ollama-log', msg);
+  return await ollamaSetup.verifyOllamaConnection(logger);
+});
+
+ipcMain.handle('ollama:install-model', async (event, modelName) => {
+  const logger = (msg) => event.sender && event.sender.send('ollama-log', msg);
+  return await ollamaSetup.installOllamaModel(modelName, logger);
+});
+
+ipcMain.handle('ollama:install', async (event) => {
+  const logger = (msg) => event.sender && event.sender.send('ollama-log', msg);
+  return await ollamaSetup.installOllama(logger);
 });
 

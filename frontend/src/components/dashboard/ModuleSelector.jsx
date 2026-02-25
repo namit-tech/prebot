@@ -5,20 +5,27 @@ import AIBrainInterface from '../modules/AIBrainInterface';
 import GemmaConfig from '../modules/GeminiConfig'; // File renamed but export is GemmaConfig
 import PredefinedAdmin from '../modules/PredefinedAdmin';
 import SetupWizard from '../common/SetupWizard';
+import OllamaSetupWizard from '../setup/OllamaSetupWizard';
 import { FaClipboardList, FaBrain, FaRobot } from 'react-icons/fa';
 
 const ModuleSelector = () => {
-  const { availableModules, activeModule, loadModule, loading, error } = useModule();
+  const { availableModules, activeModule, loadModule, loading, error, clearError } = useModule();
   const [showConfig, setShowConfig] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
-  const [setupModel, setSetupModel] = useState('gemma2:9b');
+  const [showOllamaSetup, setShowOllamaSetup] = useState(false);
+  const [setupModel, setSetupModel] = useState(localStorage.getItem('ai_model') || 'gemma2:2b');
 
   const handleModuleSelect = async (moduleId) => {
     const result = await loadModule(moduleId);
     if (!result.success) {
-      if (result.code === 'REQUIRES_SETUP') {
-        setSetupModel('gemma2:9b'); // Default for now
+      if (result.code === 'REQUIRES_SETUP' && result.suggestWizard) {
+        // Use the new automated AI setup wizard
+        setShowOllamaSetup(true);
+      } else if (result.code === 'REQUIRES_SETUP') {
+        // Old setup wizard (legacy manual setup)
+        const preferred = localStorage.getItem('ai_model') || 'gemma2:2b';
+        setSetupModel(preferred);
         setShowSetup(true);
       } else {
         alert(result.error || 'Failed to load module');
@@ -28,6 +35,11 @@ const ModuleSelector = () => {
 
   const handleSetupComplete = () => {
     setShowSetup(false);
+    setShowOllamaSetup(false);
+    
+    // Explicitly clear any persistent errors (like "Ollama not running")
+    if (clearError) clearError();
+
     // Reload the active module (should be the one that triggered setup)
     if (activeModule) {
       loadModule(activeModule);
@@ -66,7 +78,7 @@ const ModuleSelector = () => {
             {/* Multi-Model Switcher (Tabbed Interface) */}
             {availableModules.length > 1 && (
               <div className="flex p-1 bg-gray-100 rounded-xl mb-6 border border-gray-200">
-                {availableModules.map((module) => (
+                {availableModules.filter(m => m.id !== 'predefined' || availableModules.some(am => am.id === 'predefined')).map((module) => (
                   <button
                     key={module.id}
                     onClick={() => handleModuleSelect(module.id)}
@@ -77,7 +89,7 @@ const ModuleSelector = () => {
                     }`}
                   >
                     <span className="text-xl">{moduleIcons[module.id] || <FaRobot />}</span>
-                    {module.id === 'gemma' || module.id === 'gemini' ? 'Offline AI' : module.name}
+                    {module.id === 'gemma' || module.id === 'gemini' ? 'AI Brain' : module.name}
                     {activeModule === module.id && (
                       <span className="ml-2 w-2 h-2 rounded-full bg-blue-500"></span>
                     )}
@@ -95,7 +107,7 @@ const ModuleSelector = () => {
                 <div className="text-4xl text-primary-600">{moduleIcons[availableModules[0].id] || <FaRobot />}</div>
                 <div>
                    <h3 className="text-lg font-semibold text-gray-900">
-                     {availableModules[0].id === 'gemma' ? 'Offline AI' : availableModules[0].name}
+                     {availableModules[0].id === 'gemma' ? 'AI Brain' : availableModules[0].name}
                    </h3>
                    <p className="text-sm text-gray-600">Click to activate</p>
                 </div>
@@ -133,7 +145,11 @@ const ModuleSelector = () => {
             )}
           </div>
 
-          {showConfig && (activeModule === 'gemma' || activeModule === 'gemini') && <GemmaConfig />}
+          {showConfig && (activeModule === 'gemma' || activeModule === 'gemini') && (
+            <div className="mb-6">
+              <GemmaConfig onRequestSetup={() => setShowOllamaSetup(true)} />
+            </div>
+          )}
           {showAdmin && activeModule === 'predefined' && <PredefinedAdmin />}
 
           {activeModule === 'predefined' ? (
@@ -144,16 +160,23 @@ const ModuleSelector = () => {
         </>
       )}
       
-      {/* Setup Wizard Modal */}
+      {/* Setup Wizard Modal (Legacy) */}
       <SetupWizard 
         isOpen={showSetup} 
         onClose={() => setShowSetup(false)}
         onComplete={handleSetupComplete}
         targetModel={setupModel}
       />
+      
+      {/* AI Setup Wizard (Automated) */}
+      {showOllamaSetup && (
+        <OllamaSetupWizard
+          onComplete={handleSetupComplete}
+          onSkip={() => setShowOllamaSetup(false)}
+        />
+      )}
     </div>
   );
 };
 
 export default ModuleSelector;
-

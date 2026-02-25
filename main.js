@@ -1,6 +1,8 @@
 const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const ollamaSetup = require('./ollama-setup');
+const { startEmbeddedBackend, stopEmbeddedBackend } = require('./embedded-backend');
 
 // Keep a global reference of the window object
 let mainWindow;
@@ -340,8 +342,25 @@ ipcMain.handle('update-questions', async (event, questions) => {
   return { success: false };
 });
 
+ipcMain.handle('set-active-module', async (event, moduleId) => {
+  if (desktopServer) {
+    desktopServer.setActiveModule(moduleId);
+    return { success: true };
+  }
+  return { success: false };
+});
+
+ipcMain.handle('set-mobile-presets-enabled', async (event, enabled) => {
+  if (desktopServer) {
+    desktopServer.setMobilePresetsEnabled(enabled);
+    return { success: true };
+  }
+  return { success: false };
+});
+
 // Piper TTS Handler
 const piperHandler = require('./piper-handler');
+const sttHandler = require('./stt-handler');
 const os = require('os');
 const crypto = require('crypto');
 
@@ -360,6 +379,49 @@ ipcMain.handle('generate-speech', async (event, { text, voice }) => {
 // IPC: Get Piper Voices
 ipcMain.handle('get-piper-voices', async () => {
     return piperHandler.getVoices();
+});
+
+// IPC: Offline STT
+ipcMain.handle('start-stt', async () => {
+  sttHandler.start();
+  return { success: true };
+});
+
+ipcMain.handle('stop-stt', async () => {
+  sttHandler.stop();
+  return { success: true };
+});
+
+// Bridge STT events to renderer
+sttHandler.on('recognized', (text) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stt-text', text);
+  }
+});
+
+sttHandler.on('status', (status) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stt-status', status);
+  }
+});
+
+sttHandler.on('level', (level) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stt-level', level);
+  }
+});
+
+sttHandler.on('diag', (msg) => {
+  console.log(`[STT-DIAG] ${msg}`);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stt-diag', msg);
+  }
+});
+
+sttHandler.on('error', (error) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('stt-error', error);
+  }
 });
 
 // Machine ID Handler (Soft Lock)
@@ -562,11 +624,34 @@ function startPC2Server() {
 }
 
 // App event handlers
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
     console.log('✅ Electron app is ready, creating window...');
     createWindow();
     createMenu();
+
+    // Auto-start Embedded Backend
+    console.log('🚀 Starting embedded backend...');
+    try {
+        const port = await startEmbeddedBackend();
+        console.log(`✅ Embedded backend ready on port ${port}`);
+    } catch (err) {
+        console.error('❌ Failed to start embedded backend:', err);
+    }
+
+    // Auto-start Ollama Service
+    console.log('🚀 Auto-starting Ollama service...');
+    // We don't await this because we want the app to open immediately
+    ollamaSetup.restartOllama((msg) => {
+        console.log(`[OllamaAutoStart] ${msg}`);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('ollama-log', msg);
+        }
+    }).then(() => {
+        console.log('✅ Ollama auto-start initiated');
+    }).catch(err => {
+        console.error('❌ Failed to auto-start Ollama:', err);
+    });
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -597,6 +682,37 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+app.on('before-quit', async (event) => {
+  console.log('🛑 App closing, cleaning up servers...');
+  
+  if (desktopServer) {
+    try {
+      desktopServer.stop();
+      desktopServer = null;
+      console.log('✅ Desktop server stopped');
+    } catch (e) {
+      console.error('Error stopping desktop server:', e);
+    }
+  }
+
+  if (pc2Server) {
+    try {
+      pc2Server.stop();
+      pc2Server = null;
+      console.log('✅ PC2 server stopped');
+    } catch (e) {
+      console.error('Error stopping PC2 server:', e);
+    }
+  }
+
+  // Force kill any lingering VLC processes (Windows)
+  if (process.platform === 'win32') {
+    try {
+        require('child_process').execSync('taskkill /F /IM vlc.exe /T >nul 2>&1');
+    } catch (e) { /* ignore */ }
   }
 });
 
@@ -984,99 +1100,7 @@ app.on('web-contents-created', (event, contents) => {
 // OLLAMA AUTOMATION HANDLERS
 // ==========================================
 
-const OLLAMA_INSTALLER_URL = 'https://ollama.com/download/OllamaSetup.exe';
-
-ipcMain.handle('ollama-check', async () => {
-  return new Promise((resolve) => {
-    const { exec } = require('child_process');
-    const path = require('path');
-    const os = require('os');
-    const fs = require('fs');
-
-    // 1. Try global command
-    exec('ollama --version', (error, stdout, stderr) => {
-      if (!error) {
-        resolve({ installed: true, version: stdout.trim() });
-        return;
-      }
-
-      // 2. Try default Windows Local AppData path
-      if (process.platform === 'win32') {
-        const defaultPath = path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Ollama', 'ollama.exe');
-        if (fs.existsSync(defaultPath)) {
-           resolve({ installed: true, version: 'Detected (Local)' });
-           return;
-        }
-      }
-
-      resolve({ installed: false });
-    });
-  });
-});
-
-// Hologram Status
-
-
-ipcMain.handle('ollama-install', async () => {
-  const { app } = require('electron');
-  const path = require('path');
-  const fs = require('fs');
-  const https = require('https');
-  const { spawn } = require('child_process');
-
-  const installerPath = path.join(app.getPath('temp'), 'OllamaSetup.exe');
-  
-  console.log('⬇️ Downloading Ollama installer...');
-  
-  // Helper to handle redirects
-  const downloadFile = (url, dest, resolve) => {
-    https.get(url, (response) => {
-      // Handle all redirect codes
-      if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
-        downloadFile(response.headers.location, dest, resolve);
-        return;
-      }
-      
-      if (response.statusCode !== 200) {
-        resolve({ success: false, error: `Failed to download: Status ${response.statusCode}` });
-        return;
-      }
-
-      const file = fs.createWriteStream(dest);
-      response.pipe(file);
-      
-      file.on('finish', () => {
-        file.close(() => {
-          console.log('✅ Ollama installer downloaded. Running...');
-          
-          // Run the installer using shell.openPath (safer than spawn)
-          const { shell } = require('electron');
-          shell.openPath(dest).then((error) => {
-             if (error) {
-               console.error('❌ Failed to launch installer:', error);
-               resolve({ success: false, error: error });
-             } else {
-               console.log('✅ Installer launched successfully');
-               resolve({ success: true, message: 'Installer launched' });
-             }
-          });
-        });
-      });
-      
-      file.on('error', (err) => {
-        fs.unlink(dest, () => {});
-        resolve({ success: false, error: err.message });
-      });
-    }).on('error', (err) => {
-      fs.unlink(dest, () => {});
-      resolve({ success: false, error: err.message });
-    });
-  };
-
-  return new Promise((resolve) => {
-    downloadFile(OLLAMA_INSTALLER_URL, installerPath, resolve);
-  });
-});
+// Redundant legacy handlers removed in favor of ollamaSetup module
 
 ipcMain.handle('ollama-pull', async (event, modelName) => {
   const { spawn } = require('child_process');
@@ -1206,12 +1230,72 @@ ipcMain.handle('stop-hotspot', async () => {
     return await hotspotManager.stopHotspot();
 });
 
+// Ollama Setup Automation - IPC Handlers
+
+ipcMain.handle('ollama:check-setup', async (event, targetModel = null) => {
+  console.log('[Main:IPC] ollama:check-setup invoked, target:', targetModel);
+  const logger = (msg) => {
+    console.log(msg);
+    try { event.sender && event.sender.send('ollama-log', msg); } catch(e) {}
+    try { mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('ollama-log', msg); } catch(e) {}
+  };
+  const result = await ollamaSetup.checkOllamaSetup(logger, targetModel);
+  console.log('[Main:IPC] ollama:check-setup result:', JSON.stringify(result));
+  return result;
+});
+
+ipcMain.handle('ollama:configure', async (event) => {
+  console.log('[Main:IPC] ollama:configure invoked');
+  const logger = (msg) => {
+    console.log(msg);
+    try { event.sender && event.sender.send('ollama-log', msg); } catch(e) {}
+    try { mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('ollama-log', msg); } catch(e) {}
+  };
+  const result = await ollamaSetup.configureOllama(logger);
+  console.log('[Main:IPC] ollama:configure result:', JSON.stringify(result));
+  return result;
+});
+
+ipcMain.handle('ollama:verify', async (event) => {
+  console.log('[Main:IPC] ollama:verify invoked');
+  const logger = (msg) => {
+    console.log(msg);
+    try { event.sender && event.sender.send('ollama-log', msg); } catch(e) {}
+    try { mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('ollama-log', msg); } catch(e) {}
+  };
+  const result = await ollamaSetup.verifyOllamaConnection(logger);
+  console.log('[Main:IPC] ollama:verify result:', JSON.stringify(result));
+  return result;
+});
+
+ipcMain.handle('ollama:install-model', async (event, modelName) => {
+  console.log('[Main:IPC] ollama:install-model invoked for', modelName);
+  const logger = (msg) => {
+    console.log(msg);
+    try { event.sender && event.sender.send('ollama-log', msg); } catch(e) {}
+    try { mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('ollama-log', msg); } catch(e) {}
+  };
+  return await ollamaSetup.installOllamaModel(modelName, logger);
+});
+
+ipcMain.handle('ollama:install', async (event) => {
+  console.log('[Main:IPC] ollama:install invoked');
+  const logger = (message) => {
+    console.log(message);
+    try { event.sender && event.sender.send('ollama-log', message); } catch(e) {}
+    try { mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.send('ollama-log', message); } catch(e) {}
+  };
+  return await ollamaSetup.installOllama(logger);
+});
+
+
 // Bridge: Handle AI Response from Renderer and send to DesktopServer
-ipcMain.on('ai-response', (event, { requestId, answer }) => {
+ipcMain.on('ai-response', (event, responseData) => {
+    const { requestId, answer } = responseData;
     console.log(`📡 [Main] Received AI Response for ID: ${requestId}`);
     if (desktopServer) {
         console.log(`🔄 [Main] Forwarding to Desktop Server...`);
-        desktopServer.resolveRequest(requestId, answer);
+        desktopServer.resolveRequest(requestId, responseData);
     } else {
         console.error(`❌ [Main] Desktop Server instance is NULL! Cannot resolve request.`);
     }

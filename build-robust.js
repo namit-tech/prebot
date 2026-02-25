@@ -43,7 +43,41 @@ async function run() {
         }
     }
 
-    // 3. Run Build
+    // 3. Build Frontend
+    console.log('⚛️  Building Frontend...');
+    try {
+        // Check for --local flag to decide environment
+        const isLocal = process.argv.includes('--local');
+        const mode = isLocal ? 'development' : 'production';
+        console.log(`   Using mode: ${mode}`);
+        
+        execSync(`cd frontend && npm run build -- --mode ${mode}`, { stdio: 'inherit' });
+        console.log('✅ Frontend built successfully.');
+    } catch (e) {
+        console.error('❌ Frontend build failed.');
+        process.exit(1);
+    }
+
+    // 4. Copy Frontend to Root (for Electron)
+    console.log('📂 Copying frontend assets to root...');
+    try {
+        const sourceDir = path.join(__dirname, 'frontend', 'dist');
+        const targetDir = __dirname;
+        
+        if (process.platform === 'win32') {
+            // Robust copy for Windows using xcopy
+            execSync(`xcopy /s /y /e "${sourceDir}\\*" "${targetDir}"`, { stdio: 'ignore' });
+        } else {
+            // Linux/Mac
+            execSync(`cp -r "${sourceDir}/"* "${targetDir}"`, { stdio: 'ignore' });
+        }
+        console.log('✅ Assets copied.');
+    } catch (e) {
+        console.error('❌ Failed to copy assets:', e.message);
+        process.exit(1);
+    }
+
+    // 5. Run Electron Build
     console.log('🏗️ Starting electron-builder...');
     const build = spawn('npm', ['run', 'build-win'], { stdio: 'inherit', shell: true });
 

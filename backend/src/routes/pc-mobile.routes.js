@@ -21,6 +21,38 @@ router.post('/trigger-video', (req, res) => {
   });
 });
 
+const messageQueue = [];
+
+// Chat endpoint for detailed AI interaction
+router.post('/chat', (req, res) => {
+    const { message, email, model } = req.body;
+    
+    console.log(`\n📨 [MOBILE MESSAGE] from ${email}:`);
+    console.log(`💬 "${message}"`);
+    console.log(`🤖 Model: ${model || 'default'}`);
+
+    // Store for polling
+    messageQueue.push({
+        id: Date.now(),
+        message,
+        email,
+        timestamp: new Date()
+    });
+    // Keep only last 10
+    if (messageQueue.length > 10) messageQueue.shift();
+    
+    res.json({
+        success: true,
+        message: 'Message received on PC',
+        reply: `Echo: I received "${message}"`
+    });
+});
+
+// Polling endpoint for Frontend
+router.get('/messages/poll', (req, res) => {
+    res.json({ success: true, messages: messageQueue });
+});
+
 module.exports = router;
 
 

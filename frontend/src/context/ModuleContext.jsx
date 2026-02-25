@@ -41,6 +41,13 @@ export const ModuleProvider = ({ children }) => {
       loadModule(availableModules[0].id);
     }
   }, [availableModules, activeModule]);
+  
+  // Sync active module to Electron (and mobile server)
+  useEffect(() => {
+    if (activeModule && window.electronAPI && window.electronAPI.setActiveModule) {
+      window.electronAPI.setActiveModule(activeModule);
+    }
+  }, [activeModule]);
 
   const loadModule = async (moduleId) => {
     try {
@@ -79,6 +86,7 @@ export const ModuleProvider = ({ children }) => {
     }
   };
 
+  const clearError = () => setError(null);
   const getModuleInstance = (moduleId) => {
     return moduleManager.getModuleInstance(moduleId);
   };
@@ -92,7 +100,8 @@ export const ModuleProvider = ({ children }) => {
       loadModule,
       unloadModule,
       processQuestion,
-      getModuleInstance
+      getModuleInstance,
+      clearError
     }}>
       {children}
     </ModuleContext.Provider>

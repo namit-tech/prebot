@@ -20,9 +20,17 @@ const calculateExpiryDate = (days) => {
   return date;
 };
 
+// Calculate expiry date from minutes
+const calculateExpiryDateFromMinutes = (minutes) => {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() + minutes);
+  return date;
+};
+
 module.exports = {
   asyncHandler,
   generateRandomString,
-  calculateExpiryDate
+  calculateExpiryDate,
+  calculateExpiryDateFromMinutes
 };
 

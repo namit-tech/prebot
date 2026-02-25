@@ -2,10 +2,6 @@
   "appId": "com.offlineai.mobilequestions",
   "appName": "AI Assistant Questions",
   "webDir": "www",
-  "server": {
-    "androidScheme": "https",
-    "cleartext": true
-  },
   "android": {
     "allowMixedContent": true,
     "captureInput": true,
@@ -13,7 +9,7 @@
   },
   "plugins": {
     "App": {
-      "launchUrl": "mobile-questions.html"
+      "launchUrl": "index.html"
     },
     "Keyboard": {
       "resize": "body",

@@ -3,7 +3,7 @@ const Subscription = require('../models/Subscription');
 const subscriptionService = require('../services/subscription.service');
 const licenseService = require('../services/license.service');
 const { asyncHandler } = require('../utils/helpers');
-const { calculateExpiryDate } = require('../utils/helpers');
+const { calculateExpiryDate, calculateExpiryDateFromMinutes } = require('../utils/helpers');
 
 class AdminController {
   createClient = asyncHandler(async (req, res) => {
@@ -172,12 +172,18 @@ class AdminController {
             if (subscriptionData.aiModel) subscription.aiModel = subscriptionData.aiModel;
             
             // Handle duration update (re-calculate expiry)
-            if (subscriptionData.durationDays && subscriptionData.type === 'rental') {
+            if ((subscriptionData.durationValue || subscriptionData.durationDays) && subscriptionData.type === 'rental') {
                  // Reset start date to now or keep? Usually extending means adding to current expiry.
                  // But if editing "duration", it might mean "set total duration".
                  // Let's implement logic: if expiryDate provided use it, else if durationDays provided, calculate from NOW (reset) or extend? 
                  // Simple approach: Calculate new expiry date from TODAY if durationDays is explicitly changed.
-                 subscription.expiryDate = calculateExpiryDate(subscriptionData.durationDays);
+                 const durationUnit = subscriptionData.durationUnit || 'days';
+                 const durationValue = subscriptionData.durationValue || subscriptionData.durationDays;
+                 if (durationUnit === 'minutes') {
+                     subscription.expiryDate = calculateExpiryDateFromMinutes(durationValue);
+                 } else {
+                     subscription.expiryDate = calculateExpiryDate(durationValue);
+                 }
             }
             if (subscriptionData.status) subscription.status = subscriptionData.status; // allow re-activating
             

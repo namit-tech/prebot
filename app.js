@@ -1,6 +1,6 @@
 // Main Application Module
 
-const API_URL = 'http://localhost:5000/api'; // Adjust port if needed
+const API_URL = 'https://adminapi.elloindia.in/api';
 
 class LoginService {
     constructor(app) {
@@ -749,7 +749,7 @@ class OfflineAIAssistant {
         console.log('🎬 Starting PC2 animation from app.js');
         
         // Send request to start PC2 animation immediately
-        fetch('http://localhost:3000/api/trigger-hologram', {
+        fetch('http://localhost:5000/api/trigger-hologram', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'start' })
@@ -761,7 +761,7 @@ class OfflineAIAssistant {
         console.log('⏹️  Stopping PC2 animation IMMEDIATELY (synchronized with TTS end)');
         
         // Use Promise to ensure immediate execution
-        const stopPromise = fetch('http://localhost:3000/api/trigger-hologram', {
+        const stopPromise = fetch('http://localhost:5000/api/trigger-hologram', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'stop' })

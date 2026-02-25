@@ -23,6 +23,37 @@ const AIBrainInterface = () => {
         scrollToBottom();
     }, [history]);
 
+    // Update: Fetch history on mount and setup listeners
+    useEffect(() => {
+        const fetchHistory = async () => {
+            try {
+                const response = await fetch('http://localhost:3000/api/chat-history');
+                if (response.ok) {
+                    const data = await response.json();
+                    setHistory(data);
+                }
+            } catch (err) {
+                console.error('Failed to fetch chat history:', err);
+            }
+        };
+
+        fetchHistory();
+
+        // Listen for new messages from Mobile (via DesktopServer -> Main -> Renderer)
+        if (window.electronAPI && window.electronAPI.onNewChatMessage) {
+            const removeListener = window.electronAPI.onNewChatMessage((message) => {
+                // Check if message is already in local state (to avoid duplicates from own sent messages)
+                setHistory(prev => {
+                    // Simple check based on timestamp to avoid immediate duplicates
+                    const isDuplicate = prev.some(m => m.timestamp === message.timestamp && m.content === message.content);
+                    if (isDuplicate) return prev;
+                    return [...prev, message];
+                });
+            });
+            return () => removeListener();
+        }
+    }, []);
+
     const handleContextUpdate = (contextText) => {
         if (activeModuleInstance && activeModuleInstance.setSystemContext) {
             activeModuleInstance.setSystemContext(contextText);
@@ -30,7 +61,7 @@ const AIBrainInterface = () => {
             if (contextText) {
                 setHistory(prev => [...prev, { 
                     type: 'system', 
-                    content: '📚 Knowledge Base loaded. AI will now prioritize this context.' 
+                    content: 'Knowledge Base loaded. AI will now prioritize this context.' 
                 }]);
             } else {
                 setHistory(prev => [...prev, { 
@@ -50,24 +81,45 @@ const AIBrainInterface = () => {
         setLoading(true);
         setError('');
 
-        // Add user message immediately
-        setHistory(prev => [...prev, { type: 'user', content: userQuestion }]);
+        // Step 1: Update UI immediately for better responsiveness
+        const userMsg = { type: 'user', content: userQuestion, sender: 'pc', timestamp: Date.now() };
+        setHistory(prev => [...prev, userMsg]);
 
         try {
             const result = await processQuestion(userQuestion);
             
             if (result.success) {
-                setHistory(prev => [...prev, { type: 'ai', content: result.answer }]);
+                const aiAnswer = result.answer;
+
+                // Sync BOTH messages to server for history persistence & broadcast
+                // 1. User Message
+                await fetch('http://localhost:3000/api/chat-history', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(userMsg)
+                });
+
+                // 2. AI Message
+                const aiMsg = { type: 'ai', content: aiAnswer, sender: 'system', timestamp: Date.now() };
+                setHistory(prev => [...prev, aiMsg]);
+
+                await fetch('http://localhost:3000/api/chat-history', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(aiMsg)
+                });
+
             } else {
                 setError(result.error);
+                // Errors remain local only as they are transient environment issues
                 setHistory(prev => [...prev, { type: 'error', content: result.error || 'Failed to generate response' }]);
             }
         } catch (err) {
             setError(err.message);
             
             let errorMessage = err.message;
-            if (errorMessage.includes('Ollama')) {
-                errorMessage += ' - Please check Ollama connection.';
+            if (errorMessage.includes('Ollama') || errorMessage.includes('AI Engine')) {
+                errorMessage = 'Please check AI Engine connection.';
             }
             setHistory(prev => [...prev, { type: 'error', content: errorMessage }]);
         } finally {
@@ -81,7 +133,7 @@ const AIBrainInterface = () => {
             <div className="bg-gradient-to-r from-violet-900 to-indigo-900 px-6 py-4 border-b border-white/10 flex justify-between items-center">
                 <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                        <FaBrain className="text-2xl" /> Offline AI
+                        <FaBrain className="text-2xl" /> AI Chat
                     </h2>
                     <p className="text-indigo-200 text-xs mt-1">Local Intelligence Module</p>
                 </div>
@@ -112,7 +164,9 @@ const AIBrainInterface = () => {
 
                 {history.length === 0 && !showKnowledge && (
                     <div className="text-center py-20 opacity-50">
-                        <div className="text-6xl mb-4 flex justify-center"><FaRobot /></div>
+                        <div className="text-6xl mb-4 flex justify-center text-slate-700">
+                            <FaRobot />
+                        </div>
                         <p className="text-slate-400">I am ready to assist you.</p>
                         <p className="text-slate-500 text-sm mt-2">Powered by local LLM architecture</p>
                     </div>

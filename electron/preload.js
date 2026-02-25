@@ -25,6 +25,30 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Hologram Control
   playHologramVideo: (video) => ipcRenderer.invoke('play-hologram-video', video),
   stopHologramVideo: () => ipcRenderer.invoke('stop-hologram-video'),
-  getHologramStatus: () => ipcRenderer.invoke('get-hologram-status')
+  getHologramStatus: () => ipcRenderer.invoke('get-hologram-status'),
+  
+  // Ollama Setup
+  ollamaCheck: () => ipcRenderer.invoke('ollama:check-setup'),
+  ollamaCheckSetup: () => ipcRenderer.invoke('ollama:check-setup'),
+  ollamaConfigure: () => ipcRenderer.invoke('ollama:configure'),
+  ollamaVerify: () => ipcRenderer.invoke('ollama:verify'),
+  ollamaInstallModel: (modelName) => ipcRenderer.invoke('ollama:install-model', modelName),
+  ollamaInstall: () => ipcRenderer.invoke('ollama:install'),
+  
+  onOllamaProgress: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('ollama-progress', subscription);
+    return () => ipcRenderer.removeListener('ollama-progress', subscription);
+  },
+
+  onOllamaLog: (callback) => {
+    const subscription = (event, msg) => {
+        console.log('[OllamaSetup]', msg); 
+        callback(msg);
+    };
+    ipcRenderer.on('ollama-log', subscription);
+    return () => ipcRenderer.removeListener('ollama-log', subscription);
+  }
 });
+
 

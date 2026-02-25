@@ -82,7 +82,7 @@ const SubscriptionStatus = () => {
                 key={model}
                 className="px-3 py-1 bg-primary-100 text-primary-800 rounded-full text-sm font-medium"
               >
-                {model === 'predefined' ? 'Predefined Q&A' : model === 'gemma' ? 'Gemma 2 9B AI' : 'Gemini AI'}
+                {model === 'predefined' ? 'Standard Library' : model === 'gemma' ? 'Offline AI Brain' : 'Cloud Intelligence'}
               </span>
             ))}
           </div>

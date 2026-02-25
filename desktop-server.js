@@ -14,8 +14,75 @@ class DesktopServer {
         this.pendingQuestion = null;
         this.pendingRequests = new Map(); // Store pending AI requests
         this.dataDir = dataDir || __dirname; // Use provided data directory or fallback to __dirname
+        this.chatHistory = [];
+        this.activeModule = 'predefined'; // Default active module
         this.loadQuestionsFromFile();
+        this.loadChatHistory();
         this.setupServer();
+    }
+
+    setActiveModule(moduleId) {
+        this.activeModule = moduleId;
+        console.log(`🔄 Active module updated on server: ${moduleId}`);
+    }
+
+    setMobilePresetsEnabled(enabled) {
+        this.mobilePresetsEnabled = !!enabled;
+        console.log(`📱 Mobile presets sync: ${this.mobilePresetsEnabled ? 'ENABLED' : 'DISABLED'}`);
+    }
+    
+    // Load chat history from file storage
+    loadChatHistory() {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const historyFile = path.join(this.dataDir, 'chat-history.json');
+            
+            if (fs.existsSync(historyFile)) {
+                const fileContent = fs.readFileSync(historyFile, 'utf8');
+                this.chatHistory = JSON.parse(fileContent) || [];
+                console.log(`💬 Loaded ${this.chatHistory.length} messages from history`);
+            } else {
+                console.log('💬 No chat history file found, starting fresh');
+                this.chatHistory = [];
+            }
+        } catch (error) {
+            console.error('Error loading chat history:', error);
+            this.chatHistory = [];
+        }
+    }
+
+    // Save chat history to file storage
+    saveChatHistory() {
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const historyFile = path.join(this.dataDir, 'chat-history.json');
+            
+            // Limit history to last 500 messages to prevent file bloat
+            if (this.chatHistory.length > 500) {
+                this.chatHistory = this.chatHistory.slice(-500);
+            }
+            
+            fs.writeFileSync(historyFile, JSON.stringify(this.chatHistory, null, 2));
+        } catch (error) {
+            console.error('Error saving chat history:', error);
+        }
+    }
+
+    // Add message to history
+    addMessage(type, content, sender = 'unknown', timestamp = null) {
+        const message = {
+            type, // 'user', 'ai', 'system', 'error'
+            content,
+            sender, // 'mobile', 'pc', 'system'
+            timestamp: timestamp || Date.now()
+        };
+        this.chatHistory.push(message);
+        this.saveChatHistory();
+        
+        // Notify PC app via IPC if available
+        this.sendToMain('new-chat-message', message);
     }
     
     // Load questions from file storage
@@ -124,10 +191,41 @@ class DesktopServer {
             res.json({ status: 'online', app: 'Offline AI Assistant' });
         });
 
+        // 🟢 REQUIRED FOR MOBILE DISCOVERY 🟢
+        expressApp.get('/api/health', (req, res) => {
+            res.json({ status: 'ok', timestamp: Date.now() });
+        });
+
+        expressApp.get('/api/active-module', (req, res) => {
+            const models = this.currentUserSession ? (this.currentUserSession.models || []) : [];
+            const isAIBrainAuthorized = models.includes('gemma') || models.includes('gemini');
+            
+            res.json({ 
+                activeModule: this.activeModule,
+                mobilePresetsEnabled: this.mobilePresetsEnabled || false,
+                isAIBrainAuthorized: isAIBrainAuthorized
+            });
+        });
+
         expressApp.get('/api/questions', (req, res) => {
             // Get current questions (cache is updated when saved)
             const questions = this.getQuestions();
             res.json(questions);
+        });
+
+        expressApp.get('/api/chat-history', (req, res) => {
+            res.json(this.chatHistory);
+        });
+
+        // Add message from PC app
+        expressApp.post('/api/chat-history', (req, res) => {
+            const { type, content, sender, timestamp } = req.body;
+            if (type && content) {
+                this.addMessage(type, content, sender || 'pc', timestamp);
+                res.json({ success: true });
+            } else {
+                res.status(400).json({ success: false, message: 'Invalid message format' });
+            }
         });
 
         expressApp.get('/api/unlock-password', (req, res) => {
@@ -249,21 +347,71 @@ class DesktopServer {
             });
         });
 
+        // --- ADAPTER FOR MOBILE STT (Fixes API Mismatch) ---
+        expressApp.post('/api/chat', async (req, res) => {
+            const { message, email, model } = req.body;
+            console.log(`[ADAPTER] 📱 Translated '/api/chat' request: ${message}`);
+
+            // Forward to the main processing logic (same as /api/process-question)
+            // We reuse the existing logic by constructing a compatible request object
+            const question = message;
+            const history = []; // STT usually starts fresh context or handles history differently
+            const inputType = 'voice';
+
+            // ... Copy-paste logic or internal method call would be better, but for now we duplicate the core handoff
+            // to sendToMain to ensure it works exactly like process-question
+            
+            const requestId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
+            try {
+                const responsePromise = new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        if (this.pendingRequests.has(requestId)) {
+                            this.pendingRequests.delete(requestId);
+                            reject(new Error('Desktop app timed out'));
+                        }
+                    }, 30000);
+                    this.pendingRequests.set(requestId, { resolve, timeout });
+                });
+
+                this.addMessage('user', question, 'mobile');
+                this.sendToMain('mobile-chat-request', { requestId, question, history, inputType });
+
+                const result = await responsePromise;
+                
+                // Mobile expects specific response format?
+                // The current mobile code just logs "Sent successfully" if res.ok
+                // But if we want it to speak back, we might need to send a response the mobile understands.
+                // For now, just sending success true is enough for the "Sent" confirmation.
+                // The AUDIO output usually happens on the Desktop side in this architecture (Hologram).
+                
+                res.json({ success: true, answer: typeof result === 'object' ? result.answer : result });
+
+            } catch (error) {
+                console.error('Adapter Error:', error);
+                res.status(500).json({ success: false, message: error.message });
+            }
+        });
+        // ---------------------------------------------------
+
         expressApp.post('/api/ask', (req, res) => {
-            const { questionIndex, question } = req.body;
+            const { questionIndex, question, answer } = req.body;
             
             console.log(`[SYNC_DEBUG] 📱 Mobile question received: ${question}`);
             
             // 1. Store in queue (for polling backup)
-            const questionData = { questionIndex, question, timestamp: Date.now() };
+            const questionData = { 
+                questionIndex, 
+                question, 
+                answer, 
+                inputType: 'voice', // Force voice for predefined questions
+                timestamp: Date.now() 
+            };
             this.pendingQuestion = questionData;
             
             // 2. EXPLICITLY SEND TO RENDERER (Primary Path)
-            // This ensures ClientDashboard receives the event immediately
             console.log('[SYNC_DEBUG] 📤 Pushing mobile-question to Renderer...');
             this.sendToMain('mobile-question', questionData);
             
-            // Send immediate response to mobile
             res.json({ success: true, message: 'Question sent to desktop' });
         });
 
@@ -290,6 +438,7 @@ class DesktopServer {
                     this.pendingRequests.set(requestId, { resolve, timeout });
                 });
 
+                this.addMessage('user', question, 'mobile');
                 // Send request to Electron Main process
                 // Main process will forward to Renderer
                 this.sendToMain('mobile-chat-request', { requestId, question, history, inputType });
@@ -506,20 +655,6 @@ class DesktopServer {
         console.log('📱 QR code generation skipped in server mode');
     }
     
-    updateQuestions(questions) {
-        this.questions = questions || [];
-    }
-    
-    getQuestions() {
-        return this.questions || [];
-    }
-    
-    getPendingQuestion() {
-        const pending = this.pendingQuestion;
-        this.pendingQuestion = null;
-        return pending;
-    }
-
     updateUserSession(userData) {
         this.currentUserSession = userData || null;
         if (userData) {
@@ -560,6 +695,11 @@ class DesktopServer {
         if (this.pendingRequests.has(requestId)) {
             const { resolve, timeout } = this.pendingRequests.get(requestId);
             clearTimeout(timeout);
+            
+            // Extract the answer string if it's an object
+            const answerText = (typeof answer === 'object' && answer.answer) ? answer.answer : answer;
+            this.addMessage('ai', answerText, 'system');
+            
             resolve(answer);
             this.pendingRequests.delete(requestId);
             console.log(`✅ [DesktopServer] Successfully Resolved Request ${requestId}`);

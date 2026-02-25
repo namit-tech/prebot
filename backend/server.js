@@ -8,8 +8,9 @@ const PORT = process.env.PORT || 5000;
 connectDB();
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Server running on port ${PORT}`);
   console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌐 Listening on ALL interfaces (0.0.0.0)`);
 });
 

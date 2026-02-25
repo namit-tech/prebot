@@ -24,6 +24,7 @@ allprojects {
     }
     
     // Force Java 17 for all subprojects to resolve "invalid source release: 21"
+    // Force Java 17 to ensure compatibility with User's JDK
     tasks.withType(JavaCompile) {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

@@ -13,14 +13,37 @@ class ModulePredefined extends BaseModule {
       requiresNetwork: false
     });
     this.questions = [];
+    this.loadQuestionsSync(); // Load immediately on creation
+  }
+
+  loadQuestionsSync() {
+    let stored = localStorage.getItem('customQuestions') || localStorage.getItem('predefined_questions');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored);
+        this.questions = parsed.map(q => ({
+          id: q.id || Date.now() + Math.random(),
+          question: q.question || '',
+          answer: q.answer || '',
+          category: q.category || 'General',
+          createdAt: q.createdAt || new Date().toISOString()
+        })).filter(q => q.question && q.answer);
+      } catch (e) {
+        console.warn('[ModulePredefined] Load error:', e);
+      }
+    }
   }
 
   async initialize() {
     try {
-      // Load questions from localStorage or API
-      await this.loadQuestions();
       this.isInitialized = true;
       this.isActive = true;
+      
+      // Auto-sync localStorage to file on startup for mobile access
+      if (this.questions.length > 0) {
+        this.saveQuestions();
+      }
+      
       return { success: true };
     } catch (error) {
       console.error('Failed to initialize Predefined module:', error);

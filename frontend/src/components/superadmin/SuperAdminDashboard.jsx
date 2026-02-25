@@ -34,7 +34,8 @@ const SuperAdminDashboard = () => {
         password: '',
         subscriptionData: {
             type: 'rental',
-            durationDays: 365,
+            durationUnit: 'days',
+            durationValue: 365,
             models: ['predefined'],
             aiModel: 'gemma2:2b' // Default to fast model
         }
@@ -49,7 +50,8 @@ const SuperAdminDashboard = () => {
             password: '', // Don't pre-fill password
             subscriptionData: {
                 type: client.subscription?.type || 'rental',
-                durationDays: 365, // Default, or calculate remaining?
+                durationUnit: 'days',
+                durationValue: 365, // Default, or calculate remaining?
                 models: client.subscription?.models || ['predefined'],
                 status: client.subscription?.status || 'active',
                 aiModel: client.subscription?.aiModel || 'gemma2:2b'
@@ -141,7 +143,8 @@ const SuperAdminDashboard = () => {
                     password: '',
                     subscriptionData: {
                         type: 'rental',
-                        durationDays: 365,
+                        durationUnit: 'days',
+                        durationValue: 365,
                         models: ['predefined'],
                         aiModel: 'gemma2:2b'
                     }
@@ -287,7 +290,7 @@ const SuperAdminDashboard = () => {
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                             {client.subscription?.expiryDate 
-                                                ? new Date(client.subscription.expiryDate).toLocaleDateString() 
+                                                ? new Date(client.subscription.expiryDate).toLocaleString() 
                                                 : '-'}
                                         </td>
                                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
@@ -425,17 +428,33 @@ const ClientForm = ({ formData, setFormData, onSubmit, loading, error, onCancel,
             </div>
 
             {formData.subscriptionData.type === 'rental' && (
-                <div className="mb-3">
-                    <label className="block text-sm font-medium text-gray-700">Duration (Days)</label>
-                    <input
-                        type="number"
-                        className="mt-1 block w-full rounded border-gray-300 shadow-sm p-2 border"
-                        value={formData.subscriptionData.durationDays}
-                        onChange={e => setFormData({
-                            ...formData,
-                            subscriptionData: { ...formData.subscriptionData, durationDays: parseInt(e.target.value) }
-                        })}
-                    />
+                <div className="flex gap-4 mb-3">
+                    <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700">Duration Unit</label>
+                        <select
+                            className="mt-1 block w-full rounded border-gray-300 shadow-sm p-2 border"
+                            value={formData.subscriptionData.durationUnit || 'days'}
+                            onChange={e => setFormData({
+                                ...formData,
+                                subscriptionData: { ...formData.subscriptionData, durationUnit: e.target.value }
+                            })}
+                        >
+                            <option value="days">Days</option>
+                            <option value="minutes">Minutes</option>
+                        </select>
+                    </div>
+                    <div className="flex-1">
+                        <label className="block text-sm font-medium text-gray-700">Duration Value</label>
+                        <input
+                            type="number"
+                            className="mt-1 block w-full rounded border-gray-300 shadow-sm p-2 border"
+                            value={formData.subscriptionData.durationValue}
+                            onChange={e => setFormData({
+                                ...formData,
+                                subscriptionData: { ...formData.subscriptionData, durationValue: parseInt(e.target.value) || 0 }
+                            })}
+                        />
+                    </div>
                 </div>
             )}
 

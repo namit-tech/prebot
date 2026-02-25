@@ -38,3 +38,6 @@ Thumbs.db
 # MongoDB
 *.db
 *.db-journal
+
+# Large Installers
+resources/installers/OllamaSetup.exe

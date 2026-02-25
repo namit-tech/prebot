@@ -7,9 +7,6 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
   const [statusText, setStatusText] = useState('Initializing...');
   const [errorDetails, setErrorDetails] = useState(null);
   
-  // Internal logs for debugging (hidden by default)
-  const [logs, setLogs] = useState([]);
-  const [showLogs, setShowLogs] = useState(false);
   const logsEndRef = useRef(null);
 
   useEffect(() => {
@@ -19,21 +16,14 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
   }, [isOpen]);
 
   useEffect(() => {
-    if (showLogs) {
-      logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [logs, showLogs]);
-
-  const addLog = (message) => {
-    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
-  };
+    // Stage-based view management
+  }, [stage]);
 
   const startAutomation = async () => {
     setStage('checking');
     setProgress(10);
     setStatusText('Checking system requirements...');
     setErrorDetails(null);
-    setLogs([]);
 
     if (!window.electronAPI) {
       handleError('This feature requires the desktop application.');
@@ -42,15 +32,9 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
 
     try {
       // 1. Check Ollama
-      addLog('Checking Ollama...');
-      const check = await window.electronAPI.ollamaCheck();
-      
       if (!check.installed) {
-        addLog('Ollama not found. Starting installation...');
         await installOllama();
       } else {
-        addLog(`Ollama found (v${check.version})`);
-        // 2. Check Model
         await checkModel();
       }
     } catch (err) {
@@ -61,25 +45,25 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
   const installOllama = async () => {
     setStage('installing_ollama');
     setProgress(30);
-    setStatusText('Installing AI Engine (Ollama)...');
+    setStatusText('Installing AI Engine...');
     
     try {
-      addLog('Downloading installer...');
+      // addLog('Downloading installer...'); // Removed redundant log call
       const result = await window.electronAPI.ollamaInstall();
       
       if (!result.success) {
         throw new Error(result.error);
       }
 
-      addLog('Installer launched.');
-      setStatusText('Please complete the Ollama installation window...');
+      // addLog('Installer launched.'); // Removed redundant log call
+      setStatusText('Please complete the engine installation if prompted...');
 
       // Poll for completion
       const interval = setInterval(async () => {
         const check = await window.electronAPI.ollamaCheck();
         if (check.installed) {
           clearInterval(interval);
-          addLog('Ollama installed successfully!');
+          // addLog('Ollama installed successfully!'); // Removed redundant log call
           checkModel(); // Proceed to next step
         }
       }, 2000);
@@ -94,15 +78,12 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
     setStatusText('Checking AI Model...');
     setProgress(50);
 
-    addLog(`Checking for model: ${targetModel}...`);
     const models = await window.electronAPI.ollamaList();
     const hasModel = models.some(m => m.name.includes(targetModel));
 
     if (hasModel) {
-      addLog('Model found!');
       finishSetup();
     } else {
-      addLog('Model not found. Starting download...');
       await downloadModel();
     }
   };
@@ -120,24 +101,16 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
             const match = data.output.match(/(\d+)%/);
             if (match) {
                 const percent = parseInt(match[1]);
-                // Map 0-100 download progress to 55-95 total progress
                 const totalProgress = 55 + (percent * 0.4);
                 setProgress(Math.floor(totalProgress));
             }
         }
-        
-        // Log clean messages
-        const cleanMsg = data.output.replace(/\x1b\[[0-9;]*m/g, '').trim();
-        if (cleanMsg) addLog(cleanMsg);
       });
 
-      addLog(`Starting download of ${targetModel}...`);
       const result = await window.electronAPI.ollamaPull(targetModel);
-      
       cleanup();
 
       if (result.success) {
-        addLog('Download complete!');
         finishSetup();
       } else {
         throw new Error('Download failed: ' + result.error);
@@ -151,7 +124,6 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
     setStage('ready');
     setProgress(100);
     setStatusText('Setup Complete!');
-    addLog('System ready.');
     
     // Auto-close after 1.5s
     setTimeout(() => {
@@ -162,7 +134,6 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
   const handleError = (msg) => {
     setStage('error');
     setErrorDetails(msg);
-    addLog('ERROR: ' + msg);
   };
 
   if (!isOpen) return null;
@@ -201,12 +172,6 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
                         Retry
                     </button>
                 </div>
-                <button 
-                    onClick={() => setShowLogs(!showLogs)} 
-                    className="mt-6 text-xs text-gray-400 hover:text-gray-600 underline"
-                >
-                    {showLogs ? 'Hide Details' : 'Show Error Details'}
-                </button>
              </div>
           ) : stage === 'ready' ? (
              <div className="text-center py-6">
@@ -240,22 +205,13 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
 
                 {stage === 'installing_ollama' && (
                     <div className="mt-6 p-4 bg-yellow-50 rounded-lg text-sm text-yellow-800">
-                        🔔 An installation window may have opened.<br/>
-                        Please follow its instructions if requested.
+                        🔔 An installation may be finishing in the background.<br/>
+                        Please wait for the process to complete.
                     </div>
                 )}
              </div>
           )}
 
-          {/* Hidden Logs */}
-          {showLogs && (
-              <div className="mt-6 bg-gray-900 rounded p-3 h-32 overflow-y-auto text-xs font-mono text-green-400 text-left">
-                {logs.map((log, i) => (
-                    <div key={i}>{log}</div>
-                ))}
-                <div ref={logsEndRef} />
-              </div>
-          )}
 
         </div>
       </div>

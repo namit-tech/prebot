@@ -8,10 +8,11 @@
     'use strict';
 
     // Initialize Capacitor APIs
-    window.CapacitorApp = null;
-    window.CapacitorStatusBar = null;
-    window.CapacitorKeyboard = null;
-    window.Capacitor = null;
+    // Initialize Capacitor APIs
+    if (typeof window.CapacitorApp === 'undefined') window.CapacitorApp = null;
+    if (typeof window.CapacitorStatusBar === 'undefined') window.CapacitorStatusBar = null;
+    if (typeof window.CapacitorKeyboard === 'undefined') window.CapacitorKeyboard = null;
+    // CRITICAL FIX: Do not initialize window.Capacitor = null at all. Let it be undefined until injected.
 
     // Check if Capacitor is already loaded (injected by Capacitor runtime)
     if (typeof window !== 'undefined' && window.Capacitor) {

@@ -176,6 +176,14 @@ class AuthService {
       }
       return false;
     } catch (error) {
+      // OFFLINE HANDLING: If network error (no response), fall back to local token validation
+      if (!error.response) {
+         console.warn('⚠️ [AuthService] Network Error (Offline) - Falling back to local token validation');
+         // If we have a valid format token locally, assume it's good (Offline Mode)
+         return this.isTokenValid();
+      }
+      
+      // If server responded (e.g. 401 Unauthorized), return false
       return false;
     }
   }

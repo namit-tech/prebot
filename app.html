@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Assistant</title>
+    <!-- FontAwesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        /* ... existing styles ... */
+        
+        .main-container {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            height: 100vh;
+            max-width: 600px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        /* Predefined Questions Area */
+        .presets-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+            -webkit-mask-image: linear-gradient(to bottom, transparent, black 10%, black 90%, transparent);
+        }
+
+        .preset-card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 16px;
+            border-radius: 12px;
+            color: #fff;
+            font-size: 16px;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .preset-card:active {
+            background: rgba(102, 126, 234, 0.2);
+            border-color: #667eea;
+            transform: scale(0.98);
+        }
+
+        .preset-card i {
+            color: #667eea;
+            font-size: 14px;
+        }
+
+        /* Bottom Command Area */
+        .command-bar {
+            background: #222;
+            padding: 20px;
+            border-top: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .input-group {
+            display: flex;
+            background: #111;
+            border-radius: 12px;
+            padding: 5px;
+            border: 1px solid #444;
+            align-items: center;
+        }
+
+        #chatInput {
+            flex: 1;
+            background: transparent;
+            border: none;
+            color: #fff;
+            padding: 12px;
+            font-size: 16px;
+            outline: none;
+            font-family: inherit;
+        }
+
+        .send-btn {
+            width: 45px;
+            height: 45px;
+            border-radius: 10px;
+            background: #667eea;
+            color: white;
+            border: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .mic-btn-circle {
+            width: 70px;
+            height: 70px;
+            border-radius: 50%;
+            background: #333;
+            border: 2px solid #444;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 28px;
+            margin: 0 auto;
+            transition: all 0.3s;
+        }
+
+        .mic-btn-circle.listening {
+            background: #ef4444;
+            border-color: #ff6b6b;
+            box-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+            100% { transform: scale(1); }
+        }
+
+        .section-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #666;
+            margin-bottom: 10px;
+            padding-left: 20px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="main-container" id="mainApp" style="display:none">
+        <!-- Header -->
+        <div style="padding: 20px; text-align: center; border-bottom: 1px solid #333">
+             <h2 style="margin:0; font-size: 18px; color: #667eea">AI ASSISTANT</h2>
+        </div>
+
+        <!-- Option 1: Predefined Questions -->
+        <div class="section-label" style="margin-top:20px">Predefined Questions</div>
+        <div class="presets-container" id="presetsContainer">
+            <div style="text-align:center; color:#555; padding: 40px">
+                <i class="fas fa-spinner fa-spin"></i> Loading sync...
+            </div>
+        </div>
+
+        <!-- Option 3 Styling: minimalist command area -->
+        <div class="command-bar">
+            <div class="section-label">Direct Command</div>
+            
+            <!-- Mic (Optional extra) -->
+            <!-- <button class="mic-btn-circle" id="micButton">
+                <i class="fas fa-microphone"></i>
+            </button> -->
+
+            <!-- Keyboard Input -->
+            <div class="input-group">
+                <input type="text" id="chatInput" placeholder="Type your question...">
+                <button class="send-btn" onclick="mobileApp.sendChatMessage()">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+
+        <!-- Logout -->
+        <button class="logout-btn" onclick="mobileApp.logout()">Logout</button>
+    </div>
+
+    <!-- Login Overlay -->
+    <div class="login-overlay" id="loginOverlay">
+        <div class="login-box">
+            <h3 style="margin-top:0">Connect Assistant</h3>
+            <p style="color:#aaa; font-size:14px">Enter your desktop email</p>
+            <input type="email" id="loginEmail" placeholder="Email Address">
+            <button class="login-btn" onclick="mobileApp.login()">Connect Now</button>
+            <p id="loginError" style="color:#ef4444; margin-top:10px; font-size:14px; display:none"></p>
+        </div>
+    </div>
+
+    <!-- Debug Console -->
+    <div id="debugConsole"></div>
+    <button class="debug-toggle" onclick="document.getElementById('debugConsole').style.display = 'block'"></button>
+
+    <!-- Scripts -->
+    <script src="capacitor-mobile.js"></script>
+    <script src="mobile-bridge-bundle.js"></script>
+
+    <script>
+        // --- Debug Logging ---
+        function log(msg, type='info') {
+            const consoleEl = document.getElementById('debugConsole');
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            entry.style.color = type === 'error' ? '#ff6b6b' : '#0f0';
+            consoleEl.prepend(entry);
+            console.log(msg);
+        }
+
+        class MobileApp {
+            constructor() {
+                this.desktopIP = null;
+                this.userEmail = localStorage.getItem('mobile_auth_email');
+                this.isListening = false;
+                
+                // Bind UI
+                this.mainApp = document.getElementById('mainApp');
+                this.loginOverlay = document.getElementById('loginOverlay');
+                // this.micBtn = document.getElementById('micButton');
+                this.chatInput = document.getElementById('chatInput');
+                this.presetsContainer = document.getElementById('presetsContainer');
+                
+                // Setup Listeners
+                // this.micBtn.addEventListener('click', () => this.toggleMic());
+                
+                this.init();
+            }
+
+            async init() {
+                log('🚀 Mobile App Initializing...');
+                
+                if (!this.userEmail) {
+                    this.showLogin();
+                } else {
+                    this.showMain();
+                    await this.findDesktopIP();
+                    if (this.desktopIP) {
+                        this.loadPresets();
+                    }
+                }
+
+                this.setupSpeech();
+            }
+
+            showMain() {
+                this.mainApp.style.display = 'flex';
+                this.loginOverlay.style.display = 'none';
+            }
+
+            showLogin() {
+                this.mainApp.style.display = 'none';
+                this.loginOverlay.style.display = 'flex';
+            }
+
+            async loadPresets() {
+                try {
+                    log('🔄 Fetching Presets...');
+                    const res = await fetch(`http://${this.desktopIP}:3000/api/questions`);
+                    const questions = await res.json();
+                    
+                    this.presetsContainer.innerHTML = '';
+                    
+                    if (!questions || questions.length === 0) {
+                        this.presetsContainer.innerHTML = '<div style="text-align:center; color:#555; padding: 20px">No predefined questions set.</div>';
+                        return;
+                    }
+
+                    questions.forEach((q, index) => {
+                        const card = document.createElement('div');
+                        card.className = 'preset-card';
+                        card.innerHTML = `
+                            <span>${q.question}</span>
+                            <i class="fas fa-chevron-right"></i>
+                        `;
+                        card.onclick = () => this.sendPreset(q);
+                        this.presetsContainer.appendChild(card);
+                    });
+                    
+                    log(`✅ Loaded ${questions.length} presets`);
+                } catch (e) {
+                    log('❌ Failed to load presets: ' + e.message, 'error');
+                }
+            }
+
+            async sendPreset(q) {
+                log(`📤 Triggering Preset: ${q.question}`);
+                try {
+                    const res = await fetch(`http://${this.desktopIP}:3000/api/ask`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            questionIndex: 0, 
+                            question: q.question,
+                            answer: q.answer || null
+                        })
+                    });
+                    if (res.ok) {
+                        log('✅ Preset triggered');
+                    }
+                } catch (e) {
+                    log('❌ Preset Send Error: ' + e.message, 'error');
+                }
+            }
+
+            setupSpeech() {
+                if (window.CapacitorSpeech) {
+                    log('✅ Capacitor Speech Plugin Available');
+                }
+            }
+
+            async toggleMic() {
+                if (this.isListening) {
+                    await this.stopListening();
+                } else {
+                    await this.startListening();
+                }
+            }
+
+            async startListening() {
+                try {
+                    this.isListening = true;
+                    this.micBtn.classList.add('listening');
+                    
+                    if (window.CapacitorSpeech) {
+                        window.CapacitorSpeech.start({
+                            language: "en-US",
+                            maxResults: 1,
+                            prompt: "Listening at Mobile..."
+                        }).then(result => {
+                            if (result && result.matches && result.matches.length > 0) {
+                                this.chatInput.value = result.matches[0];
+                            }
+                            this.stopListening();
+                        }).catch(err => {
+                             log('Mic Error: ' + JSON.stringify(err), 'error');
+                             this.stopListening();
+                        });
+                    } else {
+                        alert('Mic requires Android App.');
+                        this.stopListening();
+                    }
+                } catch (e) {
+                    log('Start Mic Failed: ' + e.message, 'error');
+                    this.stopListening();
+                }
+            }
+
+            async stopListening() {
+                this.isListening = false;
+                this.micBtn.classList.remove('listening');
+                if (window.CapacitorSpeech) {
+                    try { window.CapacitorSpeech.stop(); } catch(e){}
+                }
+            }
+
+            async sendChatMessage() {
+                const text = this.chatInput.value.trim();
+                if (!text) return;
+                
+                if (!this.desktopIP) {
+                    await this.findDesktopIP();
+                    if (!this.desktopIP) return alert('No connection');
+                }
+
+                log('📤 Sending Custom Question: ' + text);
+                
+                try {
+                    const res = await fetch(`http://${this.desktopIP}:3000/api/chat`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            message: text,
+                            email: this.userEmail,
+                            model: "gemini"
+                        })
+                    });
+                    
+                    if (res.ok) {
+                        this.chatInput.value = '';
+                        log('✅ Sent successfully');
+                    }
+                } catch (e) {
+                    log('❌ Send Error: ' + e.message, 'error');
+                }
+            }
+
+            async findDesktopIP() {
+                log('🔍 Scanning Desktop...');
+                const candidates = ['192.168.29.184', '10.0.2.2', 'localhost']; 
+                
+                for (const ip of candidates) {
+                    try {
+                        const controller = new AbortController();
+                        setTimeout(() => controller.abort(), 1500);
+                        const res = await fetch(`http://${ip}:3000/api/health`, { signal: controller.signal });
+                        if (res.ok) {
+                            this.desktopIP = ip;
+                            log('✅ Found Desktop: ' + ip);
+                            return ip;
+                        }
+                    } catch (e) { }
+                }
+                log('❌ Could not find Desktop automatically', 'warn');
+            }
+
+            async login() {
+                const email = document.getElementById('loginEmail').value;
+                if(!email) return alert('Enter email');
+                
+                if (!this.desktopIP) await this.findDesktopIP();
+                if (!this.desktopIP) return alert('PC application not found. Check if PC app is running.');
+
+                try {
+                     const res = await fetch(`http://${this.desktopIP}:3000/api/mobile-login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email })
+                    });
+                    const data = await res.json();
+                    if (data.success) {
+                        this.userEmail = email;
+                        localStorage.setItem('mobile_auth_email', email);
+                        this.showMain();
+                        this.loadPresets();
+                        log('✅ Connected');
+                    } else {
+                        document.getElementById('loginError').textContent = data.message;
+                        document.getElementById('loginError').style.display = 'block';
+                    }
+                } catch (e) {
+                     alert('Connection error: ' + e.message);
+                }
+            }
+
+            logout() {
+                localStorage.removeItem('mobile_auth_email');
+                location.reload();
+            }
+        }
+
+        // Start
+        window.mobileApp = new MobileApp();
+    </script>
+</body>
+</html>

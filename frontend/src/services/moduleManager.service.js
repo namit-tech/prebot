@@ -20,11 +20,10 @@ class ModuleManager {
     // Get allowed modules from license
     const allowedModels = authService.getStoredModels();
     
-    // Register modules based on license
-    if (allowedModels.includes('predefined')) {
-      if (!this.modules.has('predefined')) {
-        this.modules.set('predefined', new ModulePredefined());
-      }
+    // Always register 'predefined' module as it is used for Mobile Presets management
+    // regardless of whether it's the primary AI responder.
+    if (!this.modules.has('predefined')) {
+      this.modules.set('predefined', new ModulePredefined());
     }
     
     // Support both 'gemini' (old) and 'gemma' (new) for backward compatibility
@@ -38,9 +37,13 @@ class ModuleManager {
       }
     }
 
-    // Filter out 'gemini' from availableModules if 'gemma' exists to avoid duplicates in UI
-    // We prefer 'gemma' as the canonical ID
-    this.availableModules = Array.from(this.modules.keys()).filter(key => key !== 'gemini');
+    // Filter available modules by license. 
+    // We treat 'gemma' as the canonical UI ID, so we show it if the user has either 'gemma' or 'gemini' in their license.
+    this.availableModules = Array.from(this.modules.keys()).filter(key => {
+      if (key === 'gemini') return false; // Always hide alias from UI
+      if (key === 'gemma') return allowedModels.includes('gemma') || allowedModels.includes('gemini');
+      return allowedModels.includes(key);
+    });
     return this.availableModules;
   }
 

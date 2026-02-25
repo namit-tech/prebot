@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getServerInfo: () => ipcRenderer.invoke('get-server-info'),
   updateQuestions: (questions) => ipcRenderer.invoke('update-questions', questions),
   saveQuestions: (questions) => ipcRenderer.invoke('save-questions', questions),
+  setActiveModule: (moduleId) => ipcRenderer.invoke('set-active-module', moduleId),
+  setMobilePresetsEnabled: (enabled) => ipcRenderer.invoke('set-mobile-presets-enabled', enabled),
   
   // User Session Sync
   setUserSession: (sessionData) => ipcRenderer.invoke('set-user-session', sessionData),
@@ -17,6 +19,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Piper TTS
   generateSpeech: (text, voice) => ipcRenderer.invoke('generate-speech', { text, voice }),
   getPiperVoices: () => ipcRenderer.invoke('get-piper-voices'),
+
+  // Offline STT
+  startSTT: () => ipcRenderer.invoke('start-stt'),
+  stopSTT: () => ipcRenderer.invoke('stop-stt'),
+  onSTTText: (callback) => {
+    const subscription = (event, text) => callback(text);
+    ipcRenderer.on('stt-text', subscription);
+    return () => ipcRenderer.removeListener('stt-text', subscription);
+  },
+  onSTTStatus: (callback) => {
+    const subscription = (event, status) => callback(status);
+    ipcRenderer.on('stt-status', subscription);
+    return () => ipcRenderer.removeListener('stt-status', subscription);
+  },
+  onSTTLevel: (callback) => {
+    const subscription = (event, level) => callback(level);
+    ipcRenderer.on('stt-level', subscription);
+    return () => ipcRenderer.removeListener('stt-level', subscription);
+  },
+  onSTTDiag: (callback) => {
+    const subscription = (event, msg) => callback(msg);
+    ipcRenderer.on('stt-diag', subscription);
+    return () => ipcRenderer.removeListener('stt-diag', subscription);
+  },
+  onSTTError: (callback) => {
+    const subscription = (event, err) => callback(err);
+    ipcRenderer.on('stt-error', subscription);
+    return () => ipcRenderer.removeListener('stt-error', subscription);
+  },
   
   savePassword: (password) => ipcRenderer.invoke('save-password', password),
   saveHeading: (heading) => ipcRenderer.invoke('save-heading', heading),
@@ -62,6 +93,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
         ipcRenderer.removeListener('mobile-chat-request', subscription);
     };
   },
+
+  onNewChatMessage: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('new-chat-message', subscription);
+    return () => {
+        console.log('🔌 preload.js: Removing new-chat-message listener');
+        ipcRenderer.removeListener('new-chat-message', subscription);
+    };
+  },
   
   // Singleton variables to prevent stacking
   _activeQuestionHandler: null,
@@ -98,15 +138,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   
   // Ollama Automation
-  ollamaCheck: () => ipcRenderer.invoke('ollama-check'),
-  ollamaInstall: () => ipcRenderer.invoke('ollama-install'),
-  ollamaPull: (model) => ipcRenderer.invoke('ollama-pull', model),
-  ollamaList: () => ipcRenderer.invoke('ollama-list'),
+  ollamaCheck: () => ipcRenderer.invoke('ollama:check-setup'),
+  ollamaCheckSetup: (targetModel) => ipcRenderer.invoke('ollama:check-setup', targetModel),
+  ollamaConfigure: () => ipcRenderer.invoke('ollama:configure'),
+  ollamaVerify: () => ipcRenderer.invoke('ollama:verify'),
+  ollamaInstallModel: (modelName) => ipcRenderer.invoke('ollama:install-model', modelName),
+  ollamaInstall: () => ipcRenderer.invoke('ollama:install'),
   
   onOllamaProgress: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('ollama-progress', subscription);
     return () => ipcRenderer.removeListener('ollama-progress', subscription);
+  },
+
+  onOllamaLog: (callback) => {
+    const subscription = (event, msg) => {
+        // Log to DevTools console automatically
+        console.log('[OllamaSetup]', msg); 
+        // Proceed to callback
+        callback(msg);
+    };
+    ipcRenderer.on('ollama-log', subscription);
+    return () => ipcRenderer.removeListener('ollama-log', subscription);
   },
 
   // Platform detection

@@ -19,9 +19,9 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "cross-env": "^7.0.3",
     "electron": "^27.0.0",
-    "electron-builder": "^24.6.4",
-    "cross-env": "^7.0.3"
+    "electron-builder": "^24.6.4"
   },
   "build": {
     "appId": "com.prebot.assistant",
@@ -31,13 +31,23 @@
     },
     "files": [
       "**/*",
-      "../frontend/dist/**/*"
+      "!../frontend"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/installers",
+        "to": "resources/installers",
+        "filter": ["**/*"]
+      }
     ],
     "win": {
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64",
+            "ia32"
+          ]
         }
       ],
       "icon": "../assets/icon.ico"
@@ -50,6 +60,8 @@
       "target": "AppImage",
       "icon": "../assets/icon.png"
     }
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
   }
 }
-

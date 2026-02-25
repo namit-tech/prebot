@@ -1,14 +1,23 @@
 const Subscription = require('../models/Subscription');
 const User = require('../models/User');
-const { calculateExpiryDate } = require('../utils/helpers');
+const { calculateExpiryDate, calculateExpiryDateFromMinutes } = require('../utils/helpers');
 
 class SubscriptionService {
   async createSubscription(userId, data) {
+    let expiry = data.expiryDate;
+    if (!expiry) {
+      if (data.durationUnit === 'minutes') {
+        expiry = calculateExpiryDateFromMinutes(data.durationValue || data.durationDays || 60);
+      } else {
+        expiry = calculateExpiryDate(data.durationValue || data.durationDays || 365);
+      }
+    }
+
     const subscription = new Subscription({
       userId,
       type: data.type,
       startDate: new Date(),
-      expiryDate: data.expiryDate || calculateExpiryDate(data.durationDays || 90),
+      expiryDate: expiry,
       models: data.models || ['predefined'],
       aiModel: data.aiModel || 'gemma2:2b',
       status: 'active'
