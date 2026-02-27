@@ -35,20 +35,6 @@ export const ModuleProvider = ({ children }) => {
     initializeModules();
   }, [user]);
 
-  // Auto-select if only one module is available
-  useEffect(() => {
-    if (availableModules.length === 1 && !activeModule) {
-      loadModule(availableModules[0].id);
-    }
-  }, [availableModules, activeModule]);
-  
-  // Sync active module to Electron (and mobile server)
-  useEffect(() => {
-    if (activeModule && window.electronAPI && window.electronAPI.setActiveModule) {
-      window.electronAPI.setActiveModule(activeModule);
-    }
-  }, [activeModule]);
-
   const loadModule = async (moduleId) => {
     try {
       setError(null);
@@ -90,6 +76,20 @@ export const ModuleProvider = ({ children }) => {
   const getModuleInstance = (moduleId) => {
     return moduleManager.getModuleInstance(moduleId);
   };
+
+  // Auto-select if only one module is available
+  useEffect(() => {
+    if (availableModules.length === 1 && !activeModule) {
+      loadModule(availableModules[0].id);
+    }
+  }, [availableModules, activeModule]);
+  
+  // Sync active module to Electron (and mobile server)
+  useEffect(() => {
+    if (activeModule && window.electronAPI && window.electronAPI.setActiveModule) {
+      window.electronAPI.setActiveModule(activeModule);
+    }
+  }, [activeModule]);
 
   return (
     <ModuleContext.Provider value={{

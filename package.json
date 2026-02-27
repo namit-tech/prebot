@@ -13,8 +13,8 @@
     "init:modules": "cd backend && npm run init:modules",
     "deploy:vps": "cd backend && ./deploy.sh",
     "build-win": "node scripts/build-win-robust.js",
-    "build:app": "node build-robust.js",
-    "build:app:local": "node build-robust.js --local"
+    "lint": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src",
+    "lint:fix": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src --fix"
   },
   "keywords": [
     "electron",
@@ -40,8 +40,14 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.3",
     "electron": "^27.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "eslint": "^9.39.3",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.3.0"
   },
   "build": {
     "compression": "store",
@@ -66,9 +72,7 @@
       "!**/.git",
       "!assets/videos/**/*",
       "!assets/**/*.map"
-
     ],
-
     "win": {
       "target": [
         {

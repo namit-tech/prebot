@@ -59,10 +59,26 @@ function cleanDist() {
 function buildFrontend() {
     log('⚛️ Building Frontend...');
     try {
-        execSync('cd frontend && npm run build', { stdio: 'inherit' });
+        execSync('npm run build', { stdio: 'inherit', cwd: path.join(__dirname, '..', 'frontend') });
         log('✅ Frontend built successfully.');
     } catch (error) {
         console.error('❌ Frontend build failed.');
+        process.exit(1);
+    }
+}
+
+function runLint() {
+    log('🔍 Running Linting Protection...');
+    try {
+        // Attempt to auto-fix simple errors first (Presolve)
+        log('Attempting to auto-fix simple linting issues...');
+        execSync('npm run lint:fix', { stdio: 'inherit' });
+        
+        // Final check to see if any non-fixable errors remain
+        execSync('npm run lint', { stdio: 'inherit' });
+        log('✅ Linting check passed.');
+    } catch (error) {
+        console.error('❌ Linting check failed. Please fix the errors above before building.');
         process.exit(1);
     }
 }
@@ -86,6 +102,7 @@ function syncAssets() {
 }
 
 function runBuild() {
+    runLint();
     buildFrontend();
     syncAssets();
     log('Starting electron-builder...');

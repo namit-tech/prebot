@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { FaVolumeUp, FaRobot, FaBrain, FaCheckCircle, FaClipboardList } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
+import { useModule } from '../../context/ModuleContext';
 
 const VoiceSettings = () => {
     const { user } = useAuth();
+    const { activeModule } = useModule();
     const isAIAuthorized = (user?.models || []).includes('gemma') || (user?.models || []).includes('gemini') || user?.role === 'superadmin';
     const aiName = isAIAuthorized ? 'AI' : 'Predefined';
 
@@ -12,7 +14,9 @@ const VoiceSettings = () => {
         pitch: 1.1,
         rate: 1.0,
         volume: 1.0,
-        interactionMode: 'adaptive'
+        interactionMode: 'adaptive',
+        sttLanguage: 'en',
+        listeningProfile: 'balanced'
     });
 
     const [voices, setVoices] = useState([]);
@@ -38,7 +42,6 @@ const VoiceSettings = () => {
             const available = window.speechSynthesis.getVoices();
             if (available.length > 0) {
                 setVoices(available);
-                // Set default if needed
                 setSettings(prev => {
                     if (!prev.voice || prev.voice === 'default') {
                         return { ...prev, voice: available[0].name };
@@ -52,7 +55,6 @@ const VoiceSettings = () => {
         window.speechSynthesis.onvoiceschanged = fetchVoices;
         const interval = setInterval(fetchVoices, 1000);
 
-        // Fetch Piper Voices (Offline Neural) if available
         if (window.electronAPI && window.electronAPI.getPiperVoices) {
             window.electronAPI.getPiperVoices().then(piperVoices => {
                 if (piperVoices && piperVoices.length > 0) {
@@ -76,22 +78,32 @@ const VoiceSettings = () => {
         if (window.electronAPI && window.electronAPI.setMobilePresetsEnabled) {
             try {
                 await window.electronAPI.setMobilePresetsEnabled(enabled);
-                console.log(`📱 Mobile presets sync updated: ${enabled}`);
             } catch (e) {
                 console.error('Failed to update mobile presets sync:', e);
             }
         }
     };
 
-    const saveSettings = () => {
+    const saveSettings = async () => {
+        const oldSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
         localStorage.setItem('voice_settings', JSON.stringify(settings));
+        
+        // If language or profile changed and STT is active, restart it
+        if (oldSettings.sttLanguage !== settings.sttLanguage || oldSettings.listeningProfile !== settings.listeningProfile) {
+            console.log('[Settings] Language or Profile changed, restarting STT engine...');
+            if (window.electronAPI && window.electronAPI.stopSTT) {
+                await window.electronAPI.stopSTT();
+                // We don't auto-start here because we are in manual mode now.
+                // The user will start it when they click the button.
+            }
+        }
+
         setSaveStatus('Settings Saved Successfully!');
         setTimeout(() => setSaveStatus(null), 3000);
     };
 
     const testVoice = () => {
         if (!('speechSynthesis' in window)) return alert('TTS not supported');
-        
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance('Voice test. I am ready to assist you.');
         const selected = voices.find(v => v.name === settings.voice);
@@ -122,11 +134,10 @@ const VoiceSettings = () => {
             </div>
 
             <div className="p-8 space-y-8">
-                {/* 1. INTERACTION MODE - MOVED TO TOP FOR VISIBILITY */}
                 {isAIAuthorized && (
                     <div>
                         <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-4">
-                            Core Interaction Mode (Required Action)
+                            Core Interaction Mode
                         </label>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <button
@@ -141,10 +152,9 @@ const VoiceSettings = () => {
                                     <span className={`p-2 rounded-lg ${settings.interactionMode === 'always_speak' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
                                         <FaRobot />
                                     </span>
-                                    {settings.interactionMode === 'always_speak' && <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse"></div>}
                                 </div>
                                 <h3 className="font-black text-gray-900">Always Talk</h3>
-                                <p className="text-xs text-gray-500 mt-2 leading-relaxed">{aiName} will speak back to every question (Mobile or PC). Perfect for kiosks.</p>
+                                <p className="text-xs text-gray-500 mt-2 leading-relaxed">{aiName} will speak back to every question.</p>
                             </button>
 
                             <button
@@ -159,42 +169,50 @@ const VoiceSettings = () => {
                                     <span className={`p-2 rounded-lg ${(settings.interactionMode === 'adaptive' || !settings.interactionMode) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
                                         <FaBrain />
                                     </span>
-                                    {(settings.interactionMode === 'adaptive' || !settings.interactionMode) && <div className="w-3 h-3 bg-blue-600 rounded-full animate-pulse"></div>}
                                 </div>
                                 <h3 className="font-black text-gray-900">Adaptive (Smart)</h3>
-                                <p className="text-xs text-gray-500 mt-2 leading-relaxed">{aiName} only speaks if you use your voice. Silent if you type on mobile.</p>
+                                <p className="text-xs text-gray-500 mt-2 leading-relaxed">{aiName} only speaks if you use your voice.</p>
                             </button>
                         </div>
-                        <div className="h-px bg-gray-100 mt-8"></div>
                     </div>
                 )}
 
-                {/* 2. VOICE SELECTION */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                     <div>
-                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Language Filter</label>
+                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Listening Language (Offline STT)</label>
                         <select
-                            value={filterLang}
-                            onChange={(e) => setFilterLang(e.target.value)}
+                            value={settings.sttLanguage || 'en'}
+                            onChange={(e) => setSettings({ ...settings, sttLanguage: e.target.value })}
                             className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                         >
-                            {languages.map(l => <option key={l} value={l}>{l === 'All' ? '🌐 All Languages' : l}</option>)}
+                            <option value="en">English (EN)</option>
+                            <option value="hi">Hindi (HI)</option>
+                            <option value="es">Spanish (ES)</option>
+                            <option value="fr">French (FR)</option>
+                            <option value="de">German (DE)</option>
+                            <option value="it">Italian (IT)</option>
+                            <option value="pt">Portuguese (PT)</option>
+                            <option value="zh">Chinese (ZH)</option>
+                            <option value="ja">Japanese (JA)</option>
+                            <option value="ar">Arabic (AR)</option>
                         </select>
                     </div>
                     <div>
-                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Choose {aiName} Voice</label>
+                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Listening Quality (CPU Power)</label>
                         <select
-                            value={settings.voice}
-                            onChange={(e) => setSettings({ ...settings, voice: e.target.value })}
+                            value={settings.listeningProfile || 'balanced'}
+                            onChange={(e) => setSettings({ ...settings, listeningProfile: e.target.value })}
                             className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                         >
-                            {filteredVoices.map(v => <option key={v.name} value={v.name}>{v.name}</option>)}
+                            <option value="lite">🚀 Lite (Fast / Low CPU)</option>
+                            <option value="balanced">⚖️ Balanced (Recommended)</option>
+                            <option value="power">🔥 Power (Maximum Accuracy)</option>
                         </select>
                     </div>
                 </div>
 
-                {/* 3. ENGINE TUNING */}
                 <div className="space-y-6 bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">AI Engine Tuning</label>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         <div>
                             <div className="flex justify-between items-center mb-3">
@@ -220,48 +238,11 @@ const VoiceSettings = () => {
                     </div>
                 </div>
 
-                <div className="h-px bg-gray-100"></div>
-
-                {/* 4. MOBILE DISPLAY SETTINGS */}
-                {isAIAuthorized && (
-                    <>
-                        <div className="bg-indigo-50/50 p-6 rounded-2xl border border-indigo-100">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h3 className="font-black text-indigo-900 flex items-center gap-2">
-                                        <FaClipboardList className="text-indigo-600" /> Mobile Q&A Sync
-                                    </h3>
-                                    <p className="text-xs text-indigo-700/70 mt-1 font-medium italic">
-                                        Enable this to show Predefined Q&A buttons on the mobile app even when using {aiName} Brain.
-                                    </p>
-                                </div>
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                    <input 
-                                        type="checkbox" 
-                                        className="sr-only peer"
-                                        checked={settings.enableMobilePresets || false}
-                                        onChange={(e) => toggleMobilePresets(e.target.checked)}
-                                    />
-                                    <div className="w-14 h-7 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-6 after:w-6 after:transition-all peer-checked:bg-blue-600"></div>
-                                </label>
-                            </div>
-                        </div>
-                        <div className="h-px bg-gray-100"></div>
-                    </>
-                )}
-
-                {/* 5. ACTIONS */}
                 <div className="flex items-center gap-4 pt-4">
-                    <button
-                        onClick={testVoice}
-                        className="flex-1 bg-white border-2 border-slate-200 text-slate-600 px-6 py-3 rounded-xl font-black hover:bg-slate-50 hover:border-slate-300 transition-all active:scale-95"
-                    >
+                    <button onClick={testVoice} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 px-6 py-3 rounded-xl font-black hover:bg-slate-50 transition-all active:scale-95">
                         TEST VOICE
                     </button>
-                    <button
-                        onClick={saveSettings}
-                        className="flex-[2] bg-blue-600 text-white px-6 py-3 rounded-xl font-black shadow-lg shadow-blue-200 hover:bg-blue-700 transition-all active:scale-95"
-                    >
+                    <button onClick={saveSettings} className="flex-[2] bg-blue-600 text-white px-6 py-3 rounded-xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95">
                         APPLY & SAVE SETTINGS
                     </button>
                 </div>

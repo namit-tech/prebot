@@ -10,11 +10,6 @@ const WiFiHotspot = () => {
   });
   const [connectedDevices, setConnectedDevices] = useState([]);
 
-  useEffect(() => {
-    // Check if hotspot is already running
-    checkHotspotStatus();
-  }, []);
-
   const checkHotspotStatus = async () => {
     if (isElectron() && window.electronAPI) {
       const status = await window.electronAPI.getHotspotStatus();
@@ -76,6 +71,11 @@ const WiFiHotspot = () => {
       });
     }
   };
+
+  useEffect(() => {
+    // Check if hotspot is already running
+    checkHotspotStatus();
+  }, []);
 
   useEffect(() => {
     getLocalIP();

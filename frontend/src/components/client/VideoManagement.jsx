@@ -4,9 +4,11 @@ import { isElectron } from '../../utils/electron';
 const VideoManagement = () => {
   const [videos, setVideos] = useState([]);
   const [primaryVideo, setPrimaryVideo] = useState(null);
+  const [processingVideo, setProcessingVideo] = useState(null);
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
+     
     loadVideos();
   }, []);
 
@@ -19,6 +21,11 @@ const VideoManagement = () => {
     const storedPrimary = localStorage.getItem('primary_video');
     if (storedPrimary) {
       setPrimaryVideo(storedPrimary);
+    }
+
+    const storedProcessing = localStorage.getItem('processing_video');
+    if (storedProcessing) {
+      setProcessingVideo(storedProcessing);
     }
   };
 
@@ -90,6 +97,11 @@ const VideoManagement = () => {
     }
   };
 
+  const setAsProcessing = (videoId) => {
+    setProcessingVideo(videoId);
+    localStorage.setItem('processing_video', videoId);
+  };
+
   const deleteVideo = (videoId) => {
     if (confirm('Are you sure you want to delete this video?')) {
       const updatedVideos = videos.filter(v => v.id !== videoId);
@@ -99,6 +111,11 @@ const VideoManagement = () => {
       if (primaryVideo === videoId) {
         setPrimaryVideo(null);
         localStorage.removeItem('primary_video');
+      }
+
+      if (processingVideo === videoId) {
+        setProcessingVideo(null);
+        localStorage.removeItem('processing_video');
       }
       
       // Delete from Electron storage
@@ -154,27 +171,37 @@ const VideoManagement = () => {
                 <p className="text-sm text-gray-500">{formatFileSize(video.size)}</p>
               </div>
               
-              {primaryVideo === video.id && (
-                <div className="mb-2">
-                  <span className="px-2 py-1 bg-blue-600 text-white text-xs rounded">Primary</span>
-                </div>
+              <div className="flex gap-2 mb-2 flex-wrap">
+                {primaryVideo === video.id && (
+                  <span className="px-2 py-1 bg-blue-600 text-white text-[10px] font-bold rounded uppercase">Primary</span>
+                )}
+                {processingVideo === video.id && (
+                  <span className="px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded uppercase">Processing</span>
+                )}
+              </div>
               
-              )}
-              
-              <div className="flex gap-2 mt-4">
+              <div className="flex gap-2 mt-4 flex-wrap">
                 {primaryVideo !== video.id && (
                   <button
                     onClick={() => setAsPrimary(video.id)}
-                    className="flex-1 px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                    className="flex-1 px-3 py-1 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-colors"
                   >
-                    Set Primary
+                    PRIMARY
+                  </button>
+                )}
+                {processingVideo !== video.id && (
+                  <button
+                    onClick={() => setAsProcessing(video.id)}
+                    className="flex-1 px-3 py-1 bg-indigo-600 text-white text-xs font-bold rounded hover:bg-indigo-700 transition-colors"
+                  >
+                    THINKING
                   </button>
                 )}
                 <button
                   onClick={() => deleteVideo(video.id)}
-                  className="flex-1 px-3 py-1 bg-red-600 text-white text-sm rounded hover:bg-red-700"
+                  className="px-3 py-1 bg-red-50 text-red-600 text-xs font-bold rounded hover:bg-red-600 hover:text-white transition-all"
                 >
-                  Delete
+                  DELETE
                 </button>
               </div>
             </div>

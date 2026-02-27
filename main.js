@@ -2,6 +2,7 @@ const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const ollamaSetup = require('./ollama-setup');
+const whisperSetup = require('./whisper-setup');
 const { startEmbeddedBackend, stopEmbeddedBackend } = require('./embedded-backend');
 
 // Keep a global reference of the window object
@@ -14,11 +15,14 @@ console.log('\n');
 console.log('========================================');
 console.log('🤖 Offline AI Assistant - Starting...');
 console.log('========================================');
-console.log('📦 Version: 1.0.0');
+console.log('📦 Version: 1.0.12');
 console.log('🖥️  Platform:', process.platform);
 console.log('📁 App Path:', __dirname);
 console.log('========================================');
 console.log('\n');
+
+// Initialize specialized setup handlers
+whisperSetup.initIPC();
 
 // Enable console output for packaged app (so errors are visible in CMD)
 if (process.platform === 'win32') {
@@ -105,58 +109,85 @@ function getDataDirectory() {
 function copyInitialAssets(userDataPath) {
   try {
     const appAssetsPath = path.join(__dirname, 'assets');
+    if (!fs.existsSync(appAssetsPath)) return;
+
     const userAssetsPath = path.join(userDataPath, 'assets');
-    const userVideosPath = path.join(userAssetsPath, 'videos');
-    
-    // Only copy if app assets exist and user assets don't exist yet
-    if (fs.existsSync(appAssetsPath) && !fs.existsSync(userAssetsPath)) {
-      console.log('📦 Copying initial assets to user data directory...');
-      
-      // Create directories
-      if (!fs.existsSync(userAssetsPath)) {
-        fs.mkdirSync(userAssetsPath, { recursive: true });
+    if (!fs.existsSync(userAssetsPath)) {
+      fs.mkdirSync(userAssetsPath, { recursive: true });
+    }
+
+    // Function to recursively copy a directory
+    const copyDirRecursive = (src, dest) => {
+      if (!fs.existsSync(dest)) {
+        fs.mkdirSync(dest, { recursive: true });
       }
+      const entries = fs.readdirSync(src, { withFileTypes: true });
+      for (let entry of entries) {
+        const srcPath = path.join(src, entry.name);
+        const destPath = path.join(dest, entry.name);
+        if (entry.isDirectory()) {
+          copyDirRecursive(srcPath, destPath);
+        } else {
+          // Robust Copy: Only copy if missing or if it's an executable we need to update
+          if (!fs.existsSync(destPath)) {
+            fs.copyFileSync(srcPath, destPath);
+          }
+        }
+      }
+    };
+
+    // 1. Copy Videos
+    const appVideosPath = path.join(appAssetsPath, 'videos');
+    const userVideosPath = path.join(userAssetsPath, 'videos');
+    if (fs.existsSync(appVideosPath)) {
+      const videoFiles = fs.readdirSync(appVideosPath).filter(file => 
+        file.endsWith('.mp4') || file.endsWith('.webm') || file.endsWith('.mov')
+      );
+      
       if (!fs.existsSync(userVideosPath)) {
         fs.mkdirSync(userVideosPath, { recursive: true });
       }
-      
-      // Copy videos from app bundle to user data (if they exist)
-      const appVideosPath = path.join(appAssetsPath, 'videos');
-      if (fs.existsSync(appVideosPath)) {
-        const videoFiles = fs.readdirSync(appVideosPath).filter(file => 
-          file.endsWith('.mp4') || file.endsWith('.webm') || file.endsWith('.mov')
-        );
-        
-        videoFiles.forEach(videoFile => {
-          const srcPath = path.join(appVideosPath, videoFile);
-          const destPath = path.join(userVideosPath, videoFile);
-          
-          // Only copy if destination doesn't exist
-          if (!fs.existsSync(destPath)) {
-            fs.copyFileSync(srcPath, destPath);
-            console.log(`📹 Copied video: ${videoFile}`);
-          }
-        });
-      }
-      
-      // Copy icon if it exists (try .ico, .png, .icns)
-      const iconExtensions = ['ico', 'png', 'icns'];
-      for (const ext of iconExtensions) {
-        const iconPath = path.join(appAssetsPath, `icon.${ext}`);
-        if (fs.existsSync(iconPath)) {
-          const destIconPath = path.join(userAssetsPath, `icon.${ext}`);
-          if (!fs.existsSync(destIconPath)) {
-            fs.copyFileSync(iconPath, destIconPath);
-            console.log(`✅ Copied icon.${ext} to user data directory`);
-          }
-          break; // Only copy the first found icon
+
+      videoFiles.forEach(videoFile => {
+        const srcPath = path.join(appVideosPath, videoFile);
+        const destPath = path.join(userVideosPath, videoFile);
+        if (!fs.existsSync(destPath)) {
+          fs.copyFileSync(srcPath, destPath);
+          console.log(`📹 Copied video: ${videoFile}`);
         }
-      }
-      
-      console.log('✅ Initial assets copied successfully');
+      });
     }
+
+    // 2. Copy Whisper STT Cluster (Crucial for Packaged Builds)
+    const appWhisperPath = path.join(appAssetsPath, 'whisper');
+    const userWhisperPath = path.join(userAssetsPath, 'whisper');
+    
+    // Check for a specific key file to verify installation
+    const whisperStreamExe = path.join(userWhisperPath, 'Release', 'whisper-stream.exe');
+    const whisperStreamExeAlt = path.join(userWhisperPath, 'whisper-stream.exe');
+
+    if (fs.existsSync(appWhisperPath) && (!fs.existsSync(whisperStreamExe) && !fs.existsSync(whisperStreamExeAlt))) {
+      console.log('🎙️ Deploying Neural STT Engine to user data directory...');
+      copyDirRecursive(appWhisperPath, userWhisperPath);
+      console.log('✅ Neural STT Engine deployed');
+    }
+
+    // 3. Copy Icon
+    const iconExtensions = ['ico', 'png', 'icns'];
+    for (const ext of iconExtensions) {
+      const iconPath = path.join(appAssetsPath, `icon.${ext}`);
+      if (fs.existsSync(iconPath)) {
+        const destIconPath = path.join(userAssetsPath, `icon.${ext}`);
+        if (!fs.existsSync(destIconPath)) {
+          fs.copyFileSync(iconPath, destIconPath);
+        }
+        break;
+      }
+    }
+
+    console.log('✅ Asset verification complete');
   } catch (error) {
-    console.warn('⚠️ Could not copy initial assets (this is okay):', error.message);
+    console.warn('⚠️ Asset setup warning:', error.message);
   }
 }
 
@@ -222,8 +253,8 @@ function createWindow() {
     
     console.log('✅ index.html found, loading...');
 
-    // Load the app
-    mainWindow.loadFile('index.html').then(() => {
+    // Load the app using absolute path to prevent CWD issues
+    mainWindow.loadFile(indexPath).then(() => {
       console.log('✅ index.html loaded successfully');
     }).catch((error) => {
       const errorMsg = `\n\n========================================\n❌ ERROR LOADING index.html\n========================================\n${error.message}\n\nStack Trace:\n${error.stack}\n========================================\n\n`;
@@ -360,7 +391,7 @@ ipcMain.handle('set-mobile-presets-enabled', async (event, enabled) => {
 
 // Piper TTS Handler
 const piperHandler = require('./piper-handler');
-const sttHandler = require('./stt-handler');
+const whisperHandler = require('./whisper-handler');
 const os = require('os');
 const crypto = require('crypto');
 
@@ -381,44 +412,49 @@ ipcMain.handle('get-piper-voices', async () => {
     return piperHandler.getVoices();
 });
 
-// IPC: Offline STT
-ipcMain.handle('start-stt', async () => {
-  sttHandler.start();
-  return { success: true };
+// IPC: Batch Transcribe Audio (Record → Save → Transcribe)
+ipcMain.handle('transcribe-audio', async (event, { audioBuffer, language }) => {
+    const tempDir = path.join(app.getPath('userData'), 'temp');
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir, { recursive: true });
+    
+    const wavPath = path.join(tempDir, `recording-${Date.now()}.wav`);
+    
+    try {
+        // Write the raw audio buffer from renderer to a WAV file
+        const buffer = Buffer.from(audioBuffer);
+        fs.writeFileSync(wavPath, buffer);
+        console.log(`[Main] Saved recording: ${wavPath} (${buffer.length} bytes)`);
+        
+        // Run batch transcription (high accuracy, no real-time pressure)
+        const result = await whisperHandler.transcribeFile(wavPath, language || 'en');
+        return result;
+    } catch (error) {
+        console.error('[Main] Transcription error:', error);
+        // Clean up temp file on error
+        try { fs.unlinkSync(wavPath); } catch (e) { /* ignore */ }
+        return { success: false, error: error.message };
+    }
 });
 
-ipcMain.handle('stop-stt', async () => {
-  sttHandler.stop();
-  return { success: true };
-});
+// Legacy start/stop kept for compatibility (no-ops now)
+ipcMain.handle('start-stt', async () => ({ success: true }));
+ipcMain.handle('stop-stt', async () => ({ success: true }));
 
-// Bridge STT events to renderer
-sttHandler.on('recognized', (text) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('stt-text', text);
-  }
-});
-
-sttHandler.on('status', (status) => {
+// Bridge whisper diagnostic events to renderer
+whisperHandler.on('status', (status) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('stt-status', status);
   }
 });
 
-sttHandler.on('level', (level) => {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('stt-level', level);
-  }
-});
-
-sttHandler.on('diag', (msg) => {
+whisperHandler.on('diag', (msg) => {
   console.log(`[STT-DIAG] ${msg}`);
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('stt-diag', msg);
   }
 });
 
-sttHandler.on('error', (error) => {
+whisperHandler.on('error', (error) => {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('stt-error', error);
   }

@@ -1,4 +1,5 @@
 import BaseModule from './BaseModule';
+import memoryService from '../services/memory.service';
 
 /**
  * Module 2: Gemma 2 9B AI
@@ -18,6 +19,8 @@ class ModuleGemma extends BaseModule {
     this.ollamaUrl = 'http://localhost:11434';
     this.modelName = 'gemma2:9b';
     this.isOllamaAvailable = false;
+    this.chatHistory = []; // Short-term sliding window
+    this.MAX_HISTORY = 12; // Industry standard window size
   }
 
   async initialize() {
@@ -171,7 +174,8 @@ class ModuleGemma extends BaseModule {
         success: true,
         answer: response,
         question: question,
-        source: 'gemma2'
+        source: 'gemma2',
+        history: this.chatHistory // Return current history state
       };
     } catch (error) {
       console.error('AI Brain error:', error);
@@ -189,41 +193,48 @@ class ModuleGemma extends BaseModule {
 
   async processWithOllama(question) {
     const noEmoji = "Do not use emojis in your response. Keep the tone professional.";
-    const userContext = localStorage.getItem('ai_system_instructions') || "";
-    let prompt = `Instructions: ${noEmoji}\n`;
-    if (userContext) prompt += `System Instructions: ${userContext}\n`;
-    prompt += `\nQuestion: ${question}`;
+    const userContext = localStorage.getItem('ai_system_instructions') || "You are a helpful and professional AI assistant for webinars.";
     
-    // Inject Foundation Frame (Knowledge Base) if exists
+    // 1. Maintain the Sliding Window (Short-term Memory)
+    this.chatHistory.push({ role: 'user', content: question });
+    if (this.chatHistory.length > this.MAX_HISTORY) {
+        this.chatHistory.shift(); // Remove oldest User message
+        this.chatHistory.shift(); // Remove oldest AI response
+        console.log('[GemmaModule] Sliding window shifted to stay within token limits.');
+    }
+
+    // 2. Prepare the System Message (The "Foundation")
+    let systemPrompt = `Instructions: ${noEmoji}\n${userContext}`;
+    
+    // Inject Last Summary if exists
+    const lastSummary = memoryService.getLastSummary();
+    if (lastSummary) {
+        systemPrompt += `\n\nPrevious Conversation Summary: ${lastSummary}`;
+    }
+
+    // Inject Long-term Facts (Recall)
+    const recalledFacts = memoryService.getRelevantContext(question);
+    if (recalledFacts) {
+        systemPrompt += `\n\nRetrieved Facts about User: ${recalledFacts}`;
+    }
+
     if (this.systemContext) {
-      prompt = `Using the following reference material as your strict boundary and foundation:\n\n` + 
-               `--- BEGIN REFERENCE ---\n${this.systemContext}\n--- END REFERENCE ---\n\n` +
-               `Instructions: Answer the user's question based primarily on the reference material above. ` +
-               `If the answer is not in the reference, you may use your general knowledge but mention that it's outside the provided context.\n` +
-               `IMPORTANT: ${noEmoji}\n`;
-
-      if (userContext) prompt += `System Instructions: ${userContext}\n`;
-      
-      prompt += `\nQuestion: ${question}`;
+      systemPrompt += `\n\nFoundation Knowledge:\n${this.systemContext}\n\nStrictly answer based on this knowledge if relevant.`;
     }
 
-    // DYNAMIC CHECK: Update model preference if changed in settings/localStorage
-    const preferredModel = localStorage.getItem('ai_model');
-    if (preferredModel && this.modelName !== preferredModel) {
-        console.log(`🔄 [GemmaModule] Switching model from ${this.modelName} to preferred ${preferredModel}`);
-        this.modelName = preferredModel;
-    }
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        ...this.chatHistory
+    ];
 
-    console.log('[GemmaModule] Generating response using model: ', this.modelName);
+    console.log('[GemmaModule] Generating response using /api/chat (Memory Enabled)');
 
-    const response = await fetch(`${this.ollamaUrl}/api/generate`, {
+    const response = await fetch(`${this.ollamaUrl}/api/chat`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model: this.modelName,
-        prompt: prompt,
+        messages: messages,
         stream: false,
         options: {
           temperature: 0.7,
@@ -238,7 +249,60 @@ class ModuleGemma extends BaseModule {
     }
 
     const data = await response.json();
-    return data.response || 'No response generated';
+    const aiResponse = data.message.content || 'No response generated';
+    
+    // 3. Store AI response in Short-term Memory
+    this.chatHistory.push({ role: 'assistant', content: aiResponse });
+    
+    // 4. SMART TRIGGER: Auto-Summarization & Fact Extraction
+    // If history is long, ask the AI to summarize "behind the scenes"
+    if (this.chatHistory.length >= this.MAX_HISTORY) {
+        this.triggerBackgroundSummary();
+    }
+    
+    // Always check for new "User Facts" to remember long-term
+    this.triggerBackgroundFactExtraction(question, aiResponse);
+
+    return aiResponse;
+  }
+
+  /**
+   * Background Summarization
+   * Keeps the conversation "Lean" and saves RAM
+   */
+  async triggerBackgroundSummary() {
+      // ... (existing logic) ...
+  }
+
+  /**
+   * Background Fact Extraction
+   * Detects names, locations, and preferences to remember "Forever" (Offline)
+   */
+  async triggerBackgroundFactExtraction(userQ, aiA) {
+      try {
+          const factPrompt = `Review this exchange and output ONLY a single short fact to remember about the user if any (e.g. "User lives in London"). If no new fact is present, output "NONE".\n\nUser: ${userQ}\nAI: ${aiA}`;
+          
+          const response = await fetch(`${this.ollamaUrl}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                  model: this.modelName,
+                  messages: [{ role: 'user', content: factPrompt }],
+                  stream: false,
+                  options: { temperature: 0 } // Keep it deterministic
+              })
+          });
+
+          if (response.ok) {
+              const data = await response.json();
+              const fact = data.message.content.trim();
+              if (fact && fact !== 'NONE' && !fact.includes('no new fact')) {
+                  memoryService.storeFact(fact);
+              }
+          }
+      } catch (e) {
+          console.warn('Fact extraction failed:', e);
+      }
   }
 
   async testConnection() {

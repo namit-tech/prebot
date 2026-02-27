@@ -1,0 +1,306 @@
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\App.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\AppContent.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\auth\Login.jsx
+   1:8   warning  'React' is defined but never used  no-unused-vars
+  31:14  warning  'err' is defined but never used    no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\AISystemInstructions.jsx
+    1:8    warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          no-unused-vars
+   11:7    error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+   9 |     const saved = localStorage.getItem('ai_system_instructions');
+  10 |     if (saved) {
+> 11 |       setInstructions(saved);
+     |       ^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  12 |     } else {
+  13 |       // Default persona
+  14 |       setInstructions("You are a helpful, professional AI assistant. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud.");  react-hooks/set-state-in-effect
+  117:49   warning  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            react/no-unescaped-entities
+  117:127  warning  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            react/no-unescaped-entities
+  118:20   warning  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            react/no-unescaped-entities
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\ClientDashboard.jsx
+    1:8   warning  'React' is defined but never used                                                                                            no-unused-vars
+   16:10  warning  'isSidebarOpen' is assigned a value but never used                                                                           no-unused-vars
+   16:25  warning  'setIsSidebarOpen' is assigned a value but never used                                                                        no-unused-vars
+   19:10  warning  'transcript' is assigned a value but never used                                                                              no-unused-vars
+   19:22  warning  'setTranscript' is assigned a value but never used                                                                           no-unused-vars
+   94:16  warning  'error' is defined but never used                                                                                            no-unused-vars
+  186:39  warning  'triggerVideo' is assigned a value but never used                                                                            no-unused-vars
+  333:6   warning  React Hook useEffect has a missing dependency: 'isListening'. Either include it or remove the dependency array               react-hooks/exhaustive-deps
+  350:6   warning  React Hook useEffect has a missing dependency: 'handleInteractionRequest'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  362:6   warning  React Hook useEffect has a missing dependency: 'mobileSyncEnabled'. Either include it or remove the dependency array         react-hooks/exhaustive-deps
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\HologramControl.jsx
+    1:8   warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        no-unused-vars
+   10:5   error    Error: Cannot access variable before it is declared
+
+`checkConnection` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+   8 |
+   9 |   useEffect(() => {
+> 10 |     checkConnection();
+     |     ^^^^^^^^^^^^^^^ `checkConnection` accessed before it is declared
+  11 |   }, []);
+  12 |
+  13 |   const checkConnection = async () => {
+
+  11 |   }, []);
+  12 |
+> 13 |   const checkConnection = async () => {
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 14 |     if (isElectron() && window.electronAPI) {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 15 |       const status = await window.electronAPI.getHologramStatus();
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 16 |       setIsConnected(status.isConnected || false);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 17 |     }
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 18 |   };
+     | ^^^^^ `checkConnection` is declared here
+  19 |
+  20 |   const testHologram = async () => {
+  21 |     if (!isElectron() || !window.electronAPI) {  react-hooks/immutability
+  123:25  warning  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          react/no-unescaped-entities
+  123:45  warning  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          react/no-unescaped-entities
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\QAManagement.jsx
+  1:8   warning  'React' is defined but never used      no-unused-vars
+  1:17  warning  'useState' is defined but never used   no-unused-vars
+  1:27  warning  'useEffect' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\VideoManagement.jsx
+    1:8   warning  'React' is defined but never used                                no-unused-vars
+  142:40  warning  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+  142:53  warning  `"` can be escaped with `&quot;`, `&ldquo;`, `&#34;`, `&rdquo;`  react/no-unescaped-entities
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\VoiceSettings.jsx
+   1:8   warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            no-unused-vars
+  30:29  error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  28 |             try {
+  29 |                 const parsed = JSON.parse(stored);
+> 30 |                 if (parsed) setSettings(prev => ({ ...prev, ...parsed }));
+     |                             ^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  31 |             } catch (e) {
+  32 |                 console.error('Failed to parse voice settings:', e);
+  33 |             }  react-hooks/set-state-in-effect
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\client\WiFiHotspot.jsx
+   1:8   warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              no-unused-vars
+  11:10  warning  'connectedDevices' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          no-unused-vars
+  11:28  warning  'setConnectedDevices' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       no-unused-vars
+  15:5   error    Error: Cannot access variable before it is declared
+
+`checkHotspotStatus` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+  13 |   useEffect(() => {
+  14 |     // Check if hotspot is already running
+> 15 |     checkHotspotStatus();
+     |     ^^^^^^^^^^^^^^^^^^ `checkHotspotStatus` accessed before it is declared
+  16 |   }, []);
+  17 |
+  18 |   const checkHotspotStatus = async () => {
+
+  16 |   }, []);
+  17 |
+> 18 |   const checkHotspotStatus = async () => {
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 19 |     if (isElectron() && window.electronAPI) {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 20 |       const status = await window.electronAPI.getHotspotStatus();
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 21 |       setIsRunning(status.isRunning || false);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 22 |       if (status.networkInfo) {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 23 |         setNetworkInfo(status.networkInfo);
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 24 |       }
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 25 |     }
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 26 |   };
+     | ^^^^^ `checkHotspotStatus` is declared here
+  27 |
+  28 |   const startHotspot = async () => {
+  29 |     if (!isElectron() || !window.electronAPI) {  react-hooks/immutability
+  82:6   warning  React Hook useEffect has a missing dependency: 'getLocalIP'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  react-hooks/exhaustive-deps
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\common\ContactSales.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\common\Loading.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\common\SetupWizard.jsx
+   1:8   warning  'React' is defined but never used                                                                                   no-unused-vars
+  10:9   warning  'logsEndRef' is assigned a value but never used                                                                     no-unused-vars
+  16:6   warning  React Hook useEffect has a missing dependency: 'startAutomation'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  35:12  warning  'check' is not defined                                                                                              no-undef
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\dashboard\Dashboard.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\dashboard\ModuleSelector.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\dashboard\SubscriptionStatus.jsx
+   1:8  warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              no-unused-vars
+  16:5  error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  14 |     const storedModels = authService.getStoredModels();
+  15 |     
+> 16 |     setExpiryDate(expiry);
+     |     ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  17 |     setModels(storedModels);
+  18 |
+  19 |     // Calculate time remaining  react-hooks/set-state-in-effect
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\mobile\MobileQuestionInterface.jsx
+    1:8   warning  'React' is defined but never used                                                                               no-unused-vars
+    5:11  warning  'activeModule' is assigned a value but never used                                                               no-unused-vars
+    7:10  warning  'selectedQuestion' is assigned a value but never used                                                           no-unused-vars
+   17:6   warning  React Hook useEffect has a missing dependency: 'autoConnect'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+   50:14  warning  'e' is defined but never used                                                                                   no-unused-vars
+  101:14  warning  'error' is defined but never used                                                                               no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\modules\AIBrainInterface.jsx
+   1:8   warning  'React' is defined but never used           no-unused-vars
+  10:12  warning  'error' is assigned a value but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\modules\GeminiConfig.jsx
+   1:8   warning  'React' is defined but never used                                                                               no-unused-vars
+   9:10  warning  'success' is assigned a value but never used                                                                    no-unused-vars
+  18:6   warning  React Hook useEffect has a missing dependency: 'checkStatus'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  32:14  warning  'err' is defined but never used                                                                                 no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\modules\KnowledgeBasePanel.jsx
+   1:8   warning  'React' is defined but never used                                no-unused-vars
+  56:74  warning  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`  react/no-unescaped-entities
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\modules\PredefinedAdmin.jsx
+   1:8  warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                no-unused-vars
+  20:9  warning  'hasAIBrain' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  no-unused-vars
+  28:7  error    Error: Cannot access variable before it is declared
+
+`loadQuestions` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+  26 |   useEffect(() => {
+  27 |     if (predefinedModule) {
+> 28 |       loadQuestions();
+     |       ^^^^^^^^^^^^^ `loadQuestions` accessed before it is declared
+  29 |     }
+  30 |   }, [predefinedModule]);
+  31 |
+
+  30 |   }, [predefinedModule]);
+  31 |
+> 32 |   const loadQuestions = () => {
+     |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 33 |     if (predefinedModule) {
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 34 |       setQuestions(predefinedModule.getQuestions());
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 35 |     }
+     | ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 36 |   };
+     | ^^^^^ `loadQuestions` is declared here
+  37 |
+  38 |   const handleSubmit = async (e) => {
+  39 |     e.preventDefault();  react-hooks/immutability
+  30:6  warning  React Hook useEffect has a missing dependency: 'loadQuestions'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 react-hooks/exhaustive-deps
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\modules\PredefinedInterface.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\setup\OllamaSetupWizard.jsx
+    1:8   warning  'React' is defined but never used                                                                              no-unused-vars
+   11:10  warning  'configSteps' is assigned a value but never used                                                               no-unused-vars
+   13:18  warning  'setModels' is assigned a value but never used                                                                 no-unused-vars
+   15:10  warning  'isPulling' is assigned a value but never used                                                                 no-unused-vars
+   18:9   warning  'logEndRef' is assigned a value but never used                                                                 no-unused-vars
+   40:6   warning  React Hook useEffect has a missing dependency: 'checkSetup'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  182:9   warning  'renderStepIndicator' is assigned a value but never used                                                       no-unused-vars
+  347:67  warning  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`                                                react/no-unescaped-entities
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\setup\WhisperSetupWizard.jsx
+    1:8   warning  'React' is defined but never used                                                                              no-unused-vars
+   29:22  warning  'err' is defined but never used                                                                                no-unused-vars
+   45:8   warning  React Hook useEffect has a missing dependency: 'onComplete'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+   58:18  warning  'err' is defined but never used                                                                                no-unused-vars
+  106:63  warning  `'` can be escaped with `&apos;`, `&lsquo;`, `&#39;`, `&rsquo;`                                                react/no-unescaped-entities
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\components\superadmin\SuperAdminDashboard.jsx
+  1:8  warning  'React' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\context\AuthContext.jsx
+   1:8   warning  'React' is defined but never used                                                                                               no-unused-vars
+   6:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  58:16  warning  'e' is defined but never used                                                                                                   no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\context\ModuleContext.jsx
+   1:8   warning  'React' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 no-unused-vars
+   7:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    react-refresh/only-export-components
+  26:15  warning  'modules' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      no-unused-vars
+  83:7   error    Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+  81 |   useEffect(() => {
+  82 |     if (availableModules.length === 1 && !activeModule) {
+> 83 |       loadModule(availableModules[0].id);
+     |       ^^^^^^^^^^ Avoid calling setState() directly within an effect
+  84 |     }
+  85 |   }, [availableModules, activeModule]);
+  86 |     react-hooks/set-state-in-effect
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\modules\BaseModule.js
+  27:25  warning  'question' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\modules\ModuleGemma.js
+   87:14  warning  'error' is defined but never used                  no-unused-vars
+  146:14  warning  'error' is defined but never used                  no-unused-vars
+  321:13  warning  'testResponse' is assigned a value but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\services\auth.service.js
+  15:14  warning  'e' is defined but never used  no-unused-vars
+  61:14  warning  'e' is defined but never used  no-unused-vars
+  72:14  warning  'e' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\services\license.service.js
+  70:14  warning  'e' is defined but never used  no-unused-vars
+
+C:\Users\dell\OneDrive\Documents\prebot\frontend\src\services\memory.service.js
+  16:18  warning  'e' is defined but never used  no-unused-vars
+
+??? 95 problems (7 errors, 88 warnings)
+

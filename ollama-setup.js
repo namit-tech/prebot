@@ -556,7 +556,9 @@ async function installOllamaModel(modelName, logger) {
         try {
             log('Model installation timeout - killing process');
             child.kill();
-        } catch (e) {}
+        } catch (e) {
+            // Error ignored
+        }
         reject(new Error('Model installation timeout (60 minutes reached). Please check your internet connection.'));
       }, 3600000); // 60 minutes
 
@@ -571,6 +573,7 @@ async function installOllamaModel(modelName, logger) {
           });
         } else {
           // Clean output of ANSI codes
+           
           const cleanOutput = output.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
           
           // Check if the output looks like a progress bar (false failure/interrupted)

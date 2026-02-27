@@ -438,6 +438,13 @@ class DesktopServer {
                     this.pendingRequests.set(requestId, { resolve, timeout });
                 });
 
+                if (this.activeModule === 'predefined') {
+                    return res.status(403).json({ 
+                        success: false, 
+                        message: 'The AI Brain is currently disabled. Please switch to an AI Module on the desktop.' 
+                    });
+                }
+                
                 this.addMessage('user', question, 'mobile');
                 // Send request to Electron Main process
                 // Main process will forward to Renderer

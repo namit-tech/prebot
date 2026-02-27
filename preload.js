@@ -14,15 +14,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setMobilePresetsEnabled: (enabled) => ipcRenderer.invoke('set-mobile-presets-enabled', enabled),
   
   // User Session Sync
-  setUserSession: (sessionData) => ipcRenderer.invoke('set-user-session', sessionData),
+  // User Session Sync
   
   // Piper TTS
   generateSpeech: (text, voice) => ipcRenderer.invoke('generate-speech', { text, voice }),
   getPiperVoices: () => ipcRenderer.invoke('get-piper-voices'),
 
   // Offline STT
-  startSTT: () => ipcRenderer.invoke('start-stt'),
+  startSTT: (language, profile) => ipcRenderer.invoke('start-stt', { language, profile }),
   stopSTT: () => ipcRenderer.invoke('stop-stt'),
+  transcribeAudio: (audioBuffer, language) => ipcRenderer.invoke('transcribe-audio', { audioBuffer, language }),
   onSTTText: (callback) => {
     const subscription = (event, text) => callback(text);
     ipcRenderer.on('stt-text', subscription);
@@ -160,6 +161,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     };
     ipcRenderer.on('ollama-log', subscription);
     return () => ipcRenderer.removeListener('ollama-log', subscription);
+  },
+
+  // Whisper Setup Automation
+  whisperAuditHardware: () => ipcRenderer.invoke('whisper:audit-hardware'),
+  whisperCheckSetup: () => ipcRenderer.invoke('whisper:check-setup'),
+  whisperDownloadModel: () => ipcRenderer.invoke('whisper:download-model'),
+  onWhisperProgress: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('whisper-setup-progress', subscription);
+    return () => ipcRenderer.removeListener('whisper-setup-progress', subscription);
   },
 
   // Platform detection

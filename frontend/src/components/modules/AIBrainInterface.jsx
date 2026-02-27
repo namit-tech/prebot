@@ -109,6 +109,18 @@ const AIBrainInterface = () => {
                     body: JSON.stringify(aiMsg)
                 });
 
+                // Step 3: Sync local history with the Module's sliding window if available
+                // This ensures UI matches the true brain state
+                if (result.history) {
+                    // Convert Ollama history format to UI history format
+                    const syncedHistory = result.history.map(msg => ({
+                        type: msg.role === 'user' ? 'user' : 'ai',
+                        content: msg.content,
+                        timestamp: Date.now() // Approximated
+                    }));
+                    setHistory(syncedHistory);
+                }
+
             } else {
                 setError(result.error);
                 // Errors remain local only as they are transient environment issues

@@ -23,17 +23,17 @@ const PredefinedAdmin = () => {
 
   const predefinedModule = getModuleInstance('predefined');
 
-  useEffect(() => {
-    if (predefinedModule) {
-      loadQuestions();
-    }
-  }, [predefinedModule]);
-
   const loadQuestions = () => {
     if (predefinedModule) {
       setQuestions(predefinedModule.getQuestions());
     }
   };
+
+  useEffect(() => {
+    if (predefinedModule) {
+      loadQuestions();
+    }
+  }, [predefinedModule]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -44,8 +44,13 @@ const PredefinedAdmin = () => {
     }
     
     try {
-      // If AI Brain is present, answer is optional/ignored but we send empty string to avoid DB errors
-      const answerVal = hasAIBrain ? (formData.answer || 'AI Brain') : formData.answer;
+      // Answer is now mandatory for Predefined Module
+      const answerVal = formData.answer;
+
+      if (!answerVal) {
+        alert('Please provide an answer for the predefined question.');
+        return;
+      }
 
       if (editingId) {
         await predefinedModule.updateQuestion(
@@ -125,10 +130,10 @@ const PredefinedAdmin = () => {
             for (const row of data) {
                 // Determine fields (case-insensitive fallback)
                 const q = row.question || row.Question || row.QUESTION;
-                const a = row.answer || row.Answer || row.ANSWER || (hasAIBrain ? 'AI Brain' : '');
+                const a = row.answer || row.Answer || row.ANSWER;
                 const c = row.category || row.Category || row.CATEGORY || 'General';
 
-                if (q && (hasAIBrain || a)) {
+                if (q && a) {
                     await predefinedModule.addQuestion(q, a, c);
                     addedCount++;
                 }
@@ -154,7 +159,7 @@ const PredefinedAdmin = () => {
     const data = [
         { 
           Question: "What is your return policy?", 
-          ...(hasAIBrain ? {} : { Answer: "You can return items within 30 days." }),
+          Answer: "You can return items within 30 days.",
           Category: "Support" 
         }
     ];
@@ -223,19 +228,17 @@ const PredefinedAdmin = () => {
             />
           </div>
 
-          {!hasAIBrain && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Answer
-              </label>
-              <textarea
-                value={formData.answer}
-                onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
-                className="input-field min-h-[100px]"
-                required
-              />
-            </div>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Answer
+            </label>
+            <textarea
+              value={formData.answer}
+              onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
+              className="input-field min-h-[100px]"
+              required
+            />
+          </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -269,7 +272,7 @@ const PredefinedAdmin = () => {
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <p className="font-semibold text-gray-900">{q.question}</p>
-                  {!hasAIBrain && <p className="text-sm text-gray-600 mt-1">{q.answer}</p>}
+                  <p className="text-sm text-gray-600 mt-1">{q.answer}</p>
                   <span className="inline-block mt-2 px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
                     {q.category}
                   </span>

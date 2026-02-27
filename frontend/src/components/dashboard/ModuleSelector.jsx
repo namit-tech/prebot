@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useModule } from '../../context/ModuleContext';
 import PredefinedInterface from '../modules/PredefinedInterface';
 import AIBrainInterface from '../modules/AIBrainInterface';
@@ -6,6 +6,7 @@ import GemmaConfig from '../modules/GeminiConfig'; // File renamed but export is
 import PredefinedAdmin from '../modules/PredefinedAdmin';
 import SetupWizard from '../common/SetupWizard';
 import OllamaSetupWizard from '../setup/OllamaSetupWizard';
+import WhisperSetupWizard from '../setup/WhisperSetupWizard';
 import { FaClipboardList, FaBrain, FaRobot } from 'react-icons/fa';
 
 const ModuleSelector = () => {
@@ -14,7 +15,19 @@ const ModuleSelector = () => {
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showOllamaSetup, setShowOllamaSetup] = useState(false);
+  const [showWhisperSetup, setShowWhisperSetup] = useState(false);
   const [setupModel, setSetupModel] = useState(localStorage.getItem('ai_model') || 'gemma2:2b');
+
+  useEffect(() => {
+    // Check Whisper model on component mount
+    if (window.electronAPI && window.electronAPI.whisperCheckSetup) {
+      window.electronAPI.whisperCheckSetup().then(setup => {
+        if (!setup.exists || !setup.isComplete) {
+          setShowWhisperSetup(true);
+        }
+      });
+    }
+  }, []);
 
   const handleModuleSelect = async (moduleId) => {
     const result = await loadModule(moduleId);
@@ -173,6 +186,14 @@ const ModuleSelector = () => {
         <OllamaSetupWizard
           onComplete={handleSetupComplete}
           onSkip={() => setShowOllamaSetup(false)}
+        />
+      )}
+
+      {/* Whisper Accuracy Wizard (Automated) */}
+      {showWhisperSetup && (
+        <WhisperSetupWizard
+          onComplete={() => setShowWhisperSetup(false)}
+          onSkip={() => setShowWhisperSetup(false)}
         />
       )}
     </div>

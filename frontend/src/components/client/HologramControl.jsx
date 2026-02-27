@@ -6,10 +6,6 @@ const HologramControl = () => {
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentVideo, setCurrentVideo] = useState(null);
 
-  useEffect(() => {
-    checkConnection();
-  }, []);
-
   const checkConnection = async () => {
     if (isElectron() && window.electronAPI) {
       const status = await window.electronAPI.getHologramStatus();
@@ -61,6 +57,10 @@ const HologramControl = () => {
       console.error('Failed to stop hologram:', error);
     }
   };
+
+  useEffect(() => {
+    checkConnection();
+  }, []);
 
   return (
     <div className="bg-white rounded-lg shadow p-6">

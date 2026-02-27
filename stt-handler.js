@@ -21,78 +21,67 @@ class STTHandler extends EventEmitter {
             $ErrorActionPreference = "Stop"
             try {
                 Add-Type -AssemblyName System.Speech;
-                [Console]::OutputEncoding = [System.Text.Encoding]::UTF8;
+                $culture = New-Object System.Globalization.CultureInfo("en-US");
+                $global:recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine($culture);
                 
-                $engines = [System.Speech.Recognition.SpeechRecognitionEngine]::InstalledRecognizers();
-                if ($engines.Count -eq 0) {
-                    Write-Host "ERROR:No Speech Engines found.";
-                    exit 1;
-                }
-
-                $recognizer = New-Object System.Speech.Recognition.SpeechRecognitionEngine;
+                # Accuracy Tuning (Crucial for clear results)
+                $global:recognizer.InitialSilenceTimeout = [TimeSpan]::FromSeconds(5);
+                $global:recognizer.BabbleTimeout = [TimeSpan]::FromSeconds(0);
+                $global:recognizer.EndSilenceTimeout = [TimeSpan]::FromSeconds(1.5);
+                $global:recognizer.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromSeconds(2);
                 
-                # Accuracy Tuning
-                $recognizer.InitialSilenceTimeout = [TimeSpan]::FromSeconds(3);
-                $recognizer.EndSilenceTimeout = [TimeSpan]::FromSeconds(1.5);
-                $recognizer.EndSilenceTimeoutAmbiguous = [TimeSpan]::FromSeconds(2);
+                $global:recognizer.SetInputToDefaultAudioDevice();
                 
-                $recognizer.SetInputToDefaultAudioDevice();
-                
+                # Load Grammar
                 $grammar = New-Object System.Speech.Recognition.DictationGrammar;
-                $recognizer.LoadGrammar($grammar);
+                $global:recognizer.LoadGrammar($grammar);
                 
-                # Continuous Recognition Events
-                $recognizer.add_SpeechRecognized({
-                    param($s, $e);
-                    if ($e.Result.Confidence -gt 0.1) {
-                        Write-Host "RESULT:$($e.Result.Text)";
-                    }
-                });
-
-                $recognizer.add_SpeechRecognitionRejected({
-                    param($s, $e);
-                    Write-Host "DIAG:Speech Rejected (Low Confidence)";
-                });
-
-                $recognizer.add_AudioLevelUpdated({
-                    param($s, $e);
-                    Write-Host "LEVEL:$($e.AudioLevel)";
-                });
-
-                $recognizer.add_RecognizeCompleted({
-                    param($s, $e);
-                    Write-Host "STATUS:IDLE";
-                });
-
-                # Start Async Continuous Mode
-                $recognizer.RecognizeAsync([System.Speech.Recognition.RecognizeMode]::Multiple);
                 Write-Host "STATUS:LISTENING";
-                Write-Host "DIAG:Engine Initialized - Multi-Mode Active";
+                Write-Host "DIAG:Engine Ready (Tuned Sync Mode)";
 
-                # Keep process alive forever until killed
+                $global:lastState = "";
                 while($true) {
-                    Start-Sleep -Seconds 5;
-                    Write-Host "DIAG:HEARTBEAT - Monitoring...";
+                    # Monitoring Level for UI
+                    $level = $global:recognizer.AudioLevel;
+                    if ($level -gt 5) { Write-Host "LEVEL:$level" }
+
+                    # Sync Recognize with a short internal timeout
+                    # The engine uses the .EndSilenceTimeout to decide when a sentence is done
+                    $result = $global:recognizer.Recognize([TimeSpan]::FromSeconds(2));
+                    
+                    if ($result) {
+                        # Ignore extremely low confidence immediately
+                        if ($result.Confidence -lt 0.1) {
+                            # Silence - nothing to log
+                        }
+                        elseif ($result.Confidence -ge 0.5) {
+                            # High quality result
+                            Write-Host "RESULT:$($result.Text)";
+                        } else {
+                            # Mediocre result - log for debug but don't send to chat
+                            Write-Host "DIAG:Filtered low-confidence result: $($result.Text) ($($result.Confidence))";
+                        }
+                    }
+                    
+                    # Heartbeat
+                    $global:cnt++; if ($global:cnt % 15 -eq 0) { 
+                        Write-Host "DIAG:HEARTBEAT - State: $($global:recognizer.AudioState)";
+                    }
                 }
             } catch {
-                Write-Host "ERROR:Critical STT Crash: $($_.Exception.Message)";
+                Write-Host "ERROR:Fatal Script Crash: $($_.Exception.Message)";
                 exit 99;
             }
         `;
 
-        // Write the script to a temporary file to avoid PowerShell argument length and escaping bugs
-        const tempScriptPath = path.join(os.tmpdir(), 'prebot-stt-engine.ps1');
-        try {
-            fs.writeFileSync(tempScriptPath, psScript, 'utf8');
-        } catch (err) {
-            console.error('[STT] Failed to create temp PS1 script', err);
-            return;
-        }
+        // Encode the script in UTF-16LE Base64 for maximum reliability with PowerShell -EncodedCommand
+        const scriptBuffer = Buffer.from(psScript, 'utf16le');
+        const encodedScript = scriptBuffer.toString('base64');
 
         this.psProcess = spawn('powershell.exe', [
             '-NoProfile', 
             '-ExecutionPolicy', 'Bypass', 
-            '-File', tempScriptPath
+            '-EncodedCommand', encodedScript
         ]);
 
         this.psProcess.stdout.on('data', (data) => {
@@ -124,16 +113,22 @@ class STTHandler extends EventEmitter {
 
         this.psProcess.stderr.on('data', (data) => {
             const err = data.toString().trim();
-            if (err) console.warn('[STT-Internal] ', err.substring(0, 100));
+            if (err) console.warn('[STT-Internal-Error] ', err);
         });
 
         this.psProcess.on('close', (code) => {
             console.log(`[STT] Process closed with code ${code}`);
-            this.isActive = false;
-            if (code !== 0 && code !== 1) {
-                this.emit('error', `STT Engine Crashed (Code: ${code})`);
+            this.psProcess = null;
+            
+            if (this.isActive && (code !== 0 && code !== 1)) {
+                console.warn(`[STT] Engine crashed (Code: ${code}). Attempting auto-restart...`);
+                this.emit('diag', `Engine Auto-Restarting (Last code: ${code})...`);
+                this.isActive = false;
+                setTimeout(() => this.start(), 2000); 
+            } else {
+                this.isActive = false;
+                this.emit('status', 'OFFLINE');
             }
-            this.emit('status', 'OFFLINE');
         });
     }
 
@@ -141,7 +136,9 @@ class STTHandler extends EventEmitter {
         if (!this.isActive || !this.psProcess) return;
         try {
             spawn('taskkill', ['/pid', this.psProcess.pid, '/f', '/t']);
-        } catch (e) {}
+        } catch (e) {
+            // Error ignored
+        }
         this.psProcess = null;
         this.isActive = false;
     }
