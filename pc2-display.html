@@ -112,9 +112,11 @@
                 this.statusEl = document.getElementById('statusIndicator');
                 this.statusText = document.getElementById('statusText');
                 this.body = document.getElementById('body');
-                
                 this.isPlaying = false;
                 this.isLoading = false;
+                this.lastAction = 'stop'; // Track the last recorded state from server
+                this.lastRunId = 0;       // Track requested runId
+                this.lastLoadedRunId = 0; // Track which runId we physically loaded into <source>
                 
                 // Display Settings (Persisted)
                 this.settings = JSON.parse(localStorage.getItem('display_settings')) || {
@@ -264,12 +266,22 @@
                     fetch('/api/animation-status')
                         .then(res => res.json())
                         .then(data => {
-                            if (data.action === 'start' && !this.isPlaying && !this.isLoading) {
-                                console.log(`[SYNC_DEBUG] 🚀 (${Date.now()}) 'Start' Signal Received`);
-                                this.startAnimation();
-                            } else if (data.action === 'stop' && this.isPlaying) {
-                                console.log(`[SYNC_DEBUG] 🛑 (${Date.now()}) 'Stop' Signal Received`);
-                                this.stopAnimation();
+                            if (data.action) {
+                                const actionChanged = data.action !== this.lastAction;
+                                const runChanged = data.runId && data.runId !== this.lastRunId;
+                                
+                                if (actionChanged || (data.action === 'start' && runChanged)) {
+                                    this.lastAction = data.action;
+                                    this.lastRunId = data.runId;
+                                    
+                                    if (data.action === 'start') {
+                                        console.log(`[SYNC_DEBUG] 🚀 (${Date.now()}) 'Start' Signal Received (Run ID: ${this.lastRunId})`);
+                                        this.startAnimation();
+                                    } else if (data.action === 'stop') {
+                                        console.log(`[SYNC_DEBUG] 🛑 (${Date.now()}) 'Stop' Signal Received`);
+                                        this.stopAnimation();
+                                    }
+                                }
                             }
                         })
                         .catch(err => {
@@ -290,13 +302,32 @@
                 this.loadPrimaryVideo().then((hasVideo) => {
                     if (!hasVideo) {
                         this.isLoading = false;
+                        console.error('[SYNC_DEBUG] Failed to load video for this cycle.');
                         return;
                     }
-                    this.video.currentTime = 0;
-                    this.video.play().catch(err => {
-                        console.error('Play error:', err);
+                    
+                    // If stop signal arrived while we were loading, don't play
+                    if (this.lastAction === 'stop') {
                         this.isLoading = false;
-                    });
+                        return;
+                    }
+
+                    this.video.currentTime = 0;
+                    const playPromise = this.video.play();
+                    
+                    if (playPromise !== undefined) {
+                        playPromise.then(() => {
+                            this.isLoading = false;
+                        }).catch(err => {
+                            if (err.name !== 'AbortError') {
+                                console.error('Play error:', err);
+                            }
+                            this.isLoading = false;
+                        });
+                    } else {
+                        // Fallback for older browsers where play() doesn't return a promise
+                        this.isLoading = false;
+                    }
                 });
             }
             
@@ -316,16 +347,18 @@
                                 correctPath = `/assets/videos/${filename}`;
                             }
                             
-                            // Check if src actually changed to avoid reload
-                            // BUT: user might want restart.
+                            // Append a cache-buster query parameter linked to the RunID to force a hard reload
+                            // if it's the same physical file being played as a new separate event
+                            correctPath = `${correctPath}?t=${this.lastRunId}`;
                             
                             // Simple check:
                             const currentSrc = this.video.querySelector('source')?.src;
-                            if (currentSrc && currentSrc.endsWith(correctPath)) {
-                                // Same video, just resolve
+                            if (currentSrc && currentSrc.endsWith(correctPath) && this.lastLoadedRunId === this.lastRunId) {
+                                // Same video and same event run, just resolve
                                 return Promise.resolve(true);
                             }
 
+                            this.lastLoadedRunId = this.lastRunId;
                             this.video.innerHTML = '';
                             const source = document.createElement('source');
                             source.src = correctPath;

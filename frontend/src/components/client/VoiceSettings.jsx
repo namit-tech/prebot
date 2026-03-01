@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { FaVolumeUp, FaRobot, FaBrain, FaCheckCircle, FaClipboardList } from 'react-icons/fa';
+import { FaVolumeUp, FaRobot, FaBrain, FaCheckCircle, FaClipboardList, FaMicrophone, FaHandPaper, FaInfoCircle, FaWindows, FaTrophy, FaTools } from 'react-icons/fa';
 import { useAuth } from '../../context/AuthContext';
 import { useModule } from '../../context/ModuleContext';
 
@@ -16,12 +16,17 @@ const VoiceSettings = () => {
         volume: 1.0,
         interactionMode: 'adaptive',
         sttLanguage: 'en',
-        listeningProfile: 'balanced'
+        listeningProfile: 'balanced',
+        handsFreeMode: false,
+        voiceGuide: false,
+        wakeWord: 'hello prebot'
     });
 
     const [voices, setVoices] = useState([]);
     const [filterLang, setFilterLang] = useState('All');
     const [saveStatus, setSaveStatus] = useState(null);
+    const [showHelpModal, setShowHelpModal] = useState(false);
+    const [helpOS, setHelpOS] = useState('win11'); // 'win10' or 'win11'
 
     // Initial Load
     useEffect(() => {
@@ -118,72 +123,121 @@ const VoiceSettings = () => {
     const filteredVoices = voices.filter(v => filterLang === 'All' || v.lang === filterLang);
 
     return (
-        <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
-            <div className="bg-gradient-to-r from-blue-700 to-indigo-800 px-8 py-6 flex justify-between items-center">
-                <div>
-                    <h2 className="text-2xl font-black text-white flex items-center gap-3">
-                        <FaVolumeUp /> Voice Interaction Settings
-                    </h2>
-                    <p className="text-blue-100 text-xs font-bold uppercase tracking-widest mt-1">Configure {aiName} Response & Interaction Behavior</p>
-                </div>
-                {saveStatus && (
-                    <div className="bg-green-500/20 text-green-100 px-4 py-2 rounded-xl text-sm font-bold flex items-center gap-2 animate-bounce">
-                        <FaCheckCircle /> {saveStatus}
+        <div className="bg-slate-50 rounded-[2rem] shadow-2xl border border-slate-200/50 overflow-hidden font-sans">
+            {/* Compact Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 px-6 py-4 flex justify-between items-center border-b border-white/5">
+                <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-indigo-500/10 rounded-xl flex items-center justify-center text-indigo-400 border border-indigo-500/20">
+                        <FaVolumeUp size={20} />
                     </div>
-                )}
+                    <div>
+                        <h2 className="text-lg font-black text-white tracking-tight leading-tight">
+                            Voice Interaction
+                        </h2>
+                        <p className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.2em]">Configuring {aiName} Systems</p>
+                    </div>
+                </div>
             </div>
 
-            <div className="p-8 space-y-8">
-                {isAIAuthorized && (
-                    <div>
-                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-4">
-                            Core Interaction Mode
+            <div className="p-5 space-y-5">
+                {/* Section 1: Interaction Intelligence */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    {/* Mode Selection Card */}
+                    <div className="lg:col-span-2 bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm flex flex-col justify-between">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                             AI Personality Mode
                         </label>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-2 gap-3">
                             <button
                                 onClick={() => setSettings({ ...settings, interactionMode: 'always_speak' })}
-                                className={`relative p-5 rounded-2xl border-2 text-left transition-all ${
+                                className={`group p-3 rounded-xl border-2 text-left transition-all relative overflow-hidden ${
                                     settings.interactionMode === 'always_speak' 
-                                        ? 'border-blue-600 bg-blue-50 shadow-md' 
-                                        : 'border-gray-100 hover:border-gray-200'
+                                        ? 'border-indigo-600 bg-indigo-50/50' 
+                                        : 'border-slate-100 hover:border-slate-200 bg-slate-50/30'
                                 }`}
                             >
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className={`p-2 rounded-lg ${settings.interactionMode === 'always_speak' ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                                        <FaRobot />
+                                <div className="flex items-center gap-3 relative z-10">
+                                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${settings.interactionMode === 'always_speak' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-200 text-slate-500'}`}>
+                                        <FaRobot size={14} />
                                     </span>
+                                    <div>
+                                        <h3 className={`text-xs font-black ${settings.interactionMode === 'always_speak' ? 'text-indigo-900' : 'text-slate-700'}`}>Always Talk</h3>
+                                        <p className="text-[9px] text-slate-400 font-bold mt-0.5 whitespace-nowrap">Responds to every prompt</p>
+                                    </div>
                                 </div>
-                                <h3 className="font-black text-gray-900">Always Talk</h3>
-                                <p className="text-xs text-gray-500 mt-2 leading-relaxed">{aiName} will speak back to every question.</p>
                             </button>
 
                             <button
                                 onClick={() => setSettings({ ...settings, interactionMode: 'adaptive' })}
-                                className={`relative p-5 rounded-2xl border-2 text-left transition-all ${
+                                className={`group p-3 rounded-xl border-2 text-left transition-all relative overflow-hidden ${
                                     (settings.interactionMode === 'adaptive' || !settings.interactionMode)
-                                        ? 'border-blue-600 bg-blue-50 shadow-md' 
-                                        : 'border-gray-100 hover:border-gray-200'
+                                        ? 'border-indigo-600 bg-indigo-50/50' 
+                                        : 'border-slate-100 hover:border-slate-200 bg-slate-50/30'
                                 }`}
                             >
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className={`p-2 rounded-lg ${(settings.interactionMode === 'adaptive' || !settings.interactionMode) ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
-                                        <FaBrain />
+                                <div className="flex items-center gap-3 relative z-10">
+                                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${(settings.interactionMode === 'adaptive' || !settings.interactionMode) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-200 text-slate-500'}`}>
+                                        <FaBrain size={14} />
                                     </span>
+                                    <div>
+                                        <h3 className={`text-xs font-black ${(settings.interactionMode === 'adaptive' || !settings.interactionMode) ? 'text-indigo-900' : 'text-slate-700'}`}>Smart Adaptive</h3>
+                                        <p className="text-[9px] text-slate-400 font-bold mt-0.5 whitespace-nowrap">Only speaks when spoken to</p>
+                                    </div>
                                 </div>
-                                <h3 className="font-black text-gray-900">Adaptive (Smart)</h3>
-                                <p className="text-xs text-gray-500 mt-2 leading-relaxed">{aiName} only speaks if you use your voice.</p>
                             </button>
                         </div>
                     </div>
-                )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div>
-                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Listening Language (Offline STT)</label>
+                    {/* Quick Toggles */}
+                    <div className="bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm space-y-3">
+                         <div className="flex items-center justify-between">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Guide & Sync</h4>
+                         </div>
+                         <div className="space-y-2">
+                            {/* Voice Guide Toggle */}
+                            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50/50 border border-slate-100 hover:border-indigo-200 transition-colors">
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] ${settings.voiceGuide ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-500'}`}>
+                                        <FaVolumeUp />
+                                    </div>
+                                    <span className="text-[10px] font-black text-slate-700">Voice Guide</span>
+                                </div>
+                                <button
+                                    onClick={() => setSettings({ ...settings, voiceGuide: !settings.voiceGuide })}
+                                    className={`relative w-8 h-4 rounded-full transition-all ${settings.voiceGuide ? 'bg-indigo-600' : 'bg-slate-300'}`}
+                                >
+                                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${settings.voiceGuide ? 'left-4.5' : 'left-0.5'}`} />
+                                </button>
+                            </div>
+
+                            {/* Mobile Sync Toggle */}
+                            <div className="flex items-center justify-between p-2 rounded-xl bg-slate-50/50 border border-slate-100 hover:border-emerald-200 transition-colors">
+                                <div className="flex items-center gap-2">
+                                    <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[10px] ${settings.enableMobilePresets ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-500'}`}>
+                                        <FaClipboardList />
+                                    </div>
+                                    <span className="text-[10px] font-black text-slate-700">Mobile Sync</span>
+                                </div>
+                                <button
+                                    onClick={() => toggleMobilePresets(!settings.enableMobilePresets)}
+                                    className={`relative w-8 h-4 rounded-full transition-all ${settings.enableMobilePresets ? 'bg-emerald-600' : 'bg-slate-300'}`}
+                                >
+                                    <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${settings.enableMobilePresets ? 'left-4.5' : 'left-0.5'}`} />
+                                </button>
+                            </div>
+                         </div>
+                    </div>
+                </div>
+
+                {/* Section 2: Audio Pipeline Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    {/* STT Language */}
+                    <div className="bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Listening Language</label>
                         <select
                             value={settings.sttLanguage || 'en'}
                             onChange={(e) => setSettings({ ...settings, sttLanguage: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 transition-all appearance-none cursor-pointer"
                         >
                             <option value="en">English (EN)</option>
                             <option value="hi">Hindi (HI)</option>
@@ -197,53 +251,261 @@ const VoiceSettings = () => {
                             <option value="ar">Arabic (AR)</option>
                         </select>
                     </div>
-                    <div>
-                        <label className="block text-xs font-black text-gray-400 uppercase tracking-widest mb-3">Listening Quality (CPU Power)</label>
+
+                    {/* Voice Selection */}
+                    <div className="md:col-span-2 bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm relative">
+                        <div className="flex items-center justify-between mb-3">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Speaking Voice</label>
+                            <button 
+                                onClick={() => setShowHelpModal(true)}
+                                className="text-[9px] font-black text-indigo-600 flex items-center gap-1 bg-indigo-50 px-2 py-0.5 rounded-full hover:bg-indigo-100 transition-colors"
+                            >
+                                <FaInfoCircle /> HELP
+                            </button>
+                        </div>
+                        <div className="grid grid-cols-5 gap-2">
+                            <div className="col-span-2">
+                                <select
+                                    value={filterLang}
+                                    onChange={(e) => setFilterLang(e.target.value)}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[10px] font-black text-slate-600 outline-none appearance-none cursor-pointer"
+                                >
+                                    {languages.map(l => <option key={l} value={l}>{l === 'All' ? 'Languages' : l}</option>)}
+                                </select>
+                            </div>
+                            <div className="col-span-3">
+                                <select
+                                    value={settings.voice || 'default'}
+                                    onChange={(e) => setSettings({ ...settings, voice: e.target.value })}
+                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black text-slate-800 outline-none appearance-none cursor-pointer"
+                                >
+                                    {filteredVoices.map(v => (
+                                        <option key={v.name} value={v.name}>{v.name.length > 25 ? v.name.substring(0, 22) + '...' : v.name}</option>
+                                    ))}
+                                    {filteredVoices.length === 0 && <option value="default">Default System</option>}
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Performance Profile */}
+                    <div className="bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Engine Quality</label>
                         <select
                             value={settings.listeningProfile || 'balanced'}
                             onChange={(e) => setSettings({ ...settings, listeningProfile: e.target.value })}
-                            className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl font-bold text-gray-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                            className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs font-black text-slate-700 outline-none focus:ring-2 focus:ring-indigo-500 appearance-none cursor-pointer"
                         >
-                            <option value="lite">🚀 Lite (Fast / Low CPU)</option>
-                            <option value="balanced">⚖️ Balanced (Recommended)</option>
-                            <option value="power">🔥 Power (Maximum Accuracy)</option>
+                            <option value="lite">🚀 Lite Fast</option>
+                            <option value="balanced">⚖️ Balanced</option>
+                            <option value="power">🔥 Max Power</option>
                         </select>
                     </div>
                 </div>
 
-                <div className="space-y-6 bg-slate-50 p-6 rounded-2xl border border-slate-100">
-                    <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-3">AI Engine Tuning</label>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                        <div>
-                            <div className="flex justify-between items-center mb-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Pitch</label>
-                                <span className="text-blue-600 font-black">{settings.pitch.toFixed(1)}</span>
+                {/* Section 3: Fine Tuning & Actions */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    {/* Sliders Card */}
+                    <div className="lg:col-span-2 bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm">
+                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-5 block">Audio Fidelity Controls</label>
+                         <div className="grid grid-cols-3 gap-6">
+                            <div className="space-y-3">
+                                <div className="flex justify-between text-[10px] font-black">
+                                    <span className="text-slate-400">PITCH</span>
+                                    <span className="text-indigo-600">{settings.pitch.toFixed(1)}</span>
+                                </div>
+                                <input type="range" min="0.5" max="2" step="0.1" value={settings.pitch} onChange={(e)=>setSettings({...settings, pitch: parseFloat(e.target.value)})} className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
                             </div>
-                            <input type="range" min="0.5" max="2" step="0.1" value={settings.pitch} onChange={(e)=>setSettings({...settings, pitch: parseFloat(e.target.value)})} className="w-full" />
+                            <div className="space-y-3">
+                                <div className="flex justify-between text-[10px] font-black">
+                                    <span className="text-slate-400">SPEED</span>
+                                    <span className="text-indigo-600">{settings.rate.toFixed(1)}</span>
+                                </div>
+                                <input type="range" min="0.5" max="2" step="0.1" value={settings.rate} onChange={(e)=>setSettings({...settings, rate: parseFloat(e.target.value)})} className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                            </div>
+                            <div className="space-y-3">
+                                <div className="flex justify-between text-[10px] font-black">
+                                    <span className="text-slate-400">VOLUME</span>
+                                    <span className="text-indigo-600">{Math.round(settings.volume * 100)}%</span>
+                                </div>
+                                <input type="range" min="0" max="1" step="0.1" value={settings.volume} onChange={(e)=>setSettings({...settings, volume: parseFloat(e.target.value)})} className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-indigo-600" />
+                            </div>
+                         </div>
+                    </div>
+
+                    {/* Hands Free / Wake Word */}
+                    {isAIAuthorized && (
+                        <div className={`rounded-2xl p-4 border transition-all duration-300 ${settings.handsFreeMode ? 'bg-indigo-600 border-indigo-700 shadow-lg shadow-indigo-200' : 'bg-white border-slate-200/60'}`}>
+                            <div className="flex items-center justify-between mb-3">
+                                <label className={`text-[10px] font-black uppercase tracking-widest ${settings.handsFreeMode ? 'text-white/60' : 'text-slate-400'}`}>Hands-Free Mode</label>
+                                <button
+                                    onClick={() => setSettings({ ...settings, handsFreeMode: !settings.handsFreeMode })}
+                                    className={`relative w-8 h-4 rounded-full transition-all ${settings.handsFreeMode ? 'bg-white' : 'bg-slate-300'}`}
+                                >
+                                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${settings.handsFreeMode ? 'left-4.5 bg-indigo-600' : 'left-0.5 bg-white'}`} />
+                                </button>
+                            </div>
+                            {settings.handsFreeMode ? (
+                                <div className="space-y-2 animate-in slide-in-from-top-1 duration-300">
+                                    <div className="flex items-center gap-2 text-white/40 mb-1">
+                                        <FaMicrophone size={10} />
+                                        <span className="text-[9px] font-black uppercase tracking-widest">Wake Word</span>
+                                    </div>
+                                    <input 
+                                        type="text" 
+                                        value={settings.wakeWord || 'hello prebot'} 
+                                        onChange={(e) => setSettings({ ...settings, wakeWord: e.target.value.toLowerCase() })}
+                                        className="w-full bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-xs font-black text-white outline-none focus:border-white/50 transition-all placeholder:text-white/20"
+                                        placeholder="Enter wake word..."
+                                    />
+                                </div>
+                            ) : (
+                                <div className="h-full flex items-center justify-center py-4 opacity-30 grayscale">
+                                    <FaMicrophone size={24} className="text-slate-300" />
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Footer Actions */}
+                <div className="flex gap-3 pt-2">
+                    <button onClick={testVoice} className="flex-1 bg-white border border-slate-200 text-slate-600 px-6 py-3 rounded-2xl text-xs font-black hover:bg-slate-50 transition-all active:scale-95 shadow-sm">
+                        DEBUG AUDIO
+                    </button>
+                    <button onClick={saveSettings} className="flex-[3] bg-indigo-600 text-white px-6 py-3 rounded-2xl text-xs font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest">
+                        Save Configuration
+                    </button>
+                </div>
+            </div>
+            
+            <VoiceGuideModal 
+                isOpen={showHelpModal}
+                onClose={() => setShowHelpModal(false)}
+                os={helpOS}
+                setOS={setHelpOS}
+            />
+
+            {/* --- SUCCESS TOAST (CENTERED MODEL) --- */}
+            {saveStatus && (
+                <div className="fixed inset-0 z-[2000] flex items-center justify-center pointer-events-none animate-in fade-in zoom-in duration-300">
+                    <div className="bg-white/90 backdrop-blur-xl border border-emerald-500/30 px-8 py-6 rounded-[2rem] shadow-[0_20px_50px_rgba(16,185,129,0.2)] flex flex-col items-center gap-4 text-center">
+                        <div className="w-16 h-16 bg-emerald-500 text-white rounded-2xl flex items-center justify-center text-3xl shadow-lg shadow-emerald-200 animate-bounce">
+                            <FaCheckCircle />
                         </div>
                         <div>
-                            <div className="flex justify-between items-center mb-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Speed</label>
-                                <span className="text-blue-600 font-black">{settings.rate.toFixed(1)}</span>
-                            </div>
-                            <input type="range" min="0.5" max="2" step="0.1" value={settings.rate} onChange={(e)=>setSettings({...settings, rate: parseFloat(e.target.value)})} className="w-full" />
-                        </div>
-                        <div>
-                            <div className="flex justify-between items-center mb-3">
-                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Volume</label>
-                                <span className="text-blue-600 font-black">{Math.round(settings.volume * 100)}%</span>
-                            </div>
-                            <input type="range" min="0" max="1" step="0.1" value={settings.volume} onChange={(e)=>setSettings({...settings, volume: parseFloat(e.target.value)})} className="w-full" />
+                            <h3 className="text-xl font-black text-slate-900 tracking-tight">Configuration Saved!</h3>
+                            <p className="text-sm font-bold text-slate-500 mt-1 uppercase tracking-widest text-[10px]">{saveStatus}</p>
                         </div>
                     </div>
                 </div>
+            )}
+        </div>
+    );
+};
 
-                <div className="flex items-center gap-4 pt-4">
-                    <button onClick={testVoice} className="flex-1 bg-white border-2 border-slate-200 text-slate-600 px-6 py-3 rounded-xl font-black hover:bg-slate-50 transition-all active:scale-95">
-                        TEST VOICE
+/* --- VOICE INSTALLATION GUIDE MODAL --- */
+const VoiceGuideModal = ({ isOpen, onClose, os, setOS }) => {
+    if (!isOpen) return null;
+
+    const steps = {
+        win11: [
+            { title: "Open Settings", desc: "Press Windows Key + I on your keyboard." },
+            { title: "Time & Language", desc: "Select 'Time & language' from the left sidebar." },
+            { title: "Speech Settings", desc: "Click on 'Speech' menu to see voice options." },
+            { title: "Add Voices", desc: "Click 'Add voices' under Manage voices. Choose a language, then click Add." },
+            { title: "Restart PreBot", desc: "Once download finishes, restart this app. New voices will appear!" }
+        ],
+        win10: [
+            { title: "Settings", desc: "Open Start Menu and click the Gear icon (Settings)." },
+            { title: "Time & Language", desc: "Select 'Time & Language' square." },
+            { title: "Speech Tab", desc: "Click 'Speech' on the left sidebar." },
+            { title: "Manage Voices", desc: "Click 'Add voices' under Manage voices section." },
+            { title: "Restart App", desc: "Download the voice pack, then restart PreBot to use them." }
+        ]
+    };
+
+    return (
+        <div className="fixed inset-0 z-[1000] bg-black/70 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in duration-300">
+            <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-2xl overflow-hidden border border-white/20">
+                {/* Header */}
+                <div className="bg-gradient-to-r from-blue-700 to-indigo-900 p-8 text-white relative">
+                    <button 
+                        onClick={onClose}
+                        className="absolute top-6 right-6 w-10 h-10 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-xl transition-all"
+                    >
+                        &times;
                     </button>
-                    <button onClick={saveSettings} className="flex-[2] bg-blue-600 text-white px-6 py-3 rounded-xl font-black shadow-lg hover:bg-blue-700 transition-all active:scale-95">
-                        APPLY & SAVE SETTINGS
+                    <div className="flex items-center gap-4 mb-4">
+                        <div className="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center text-3xl">
+                            <FaWindows />
+                        </div>
+                        <div>
+                            <h2 className="text-2xl font-black italic tracking-tighter">VOICE INSTALLATION GUIDE</h2>
+                            <p className="text-blue-100 text-xs font-bold uppercase tracking-widest">Get High-Quality Neural Voices on your PC</p>
+                        </div>
+                    </div>
+
+                    {/* Tabs */}
+                    <div className="flex gap-2 p-1 bg-black/20 rounded-2xl w-fit">
+                        <button 
+                            onClick={() => setOS('win11')}
+                            className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${os === 'win11' ? 'bg-white text-blue-800 shadow-lg' : 'text-white/60 hover:text-white'}`}
+                        >
+                            WINDOWS 11
+                        </button>
+                        <button 
+                            onClick={() => setOS('win10')}
+                            className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${os === 'win10' ? 'bg-white text-blue-800 shadow-lg' : 'text-white/60 hover:text-white'}`}
+                        >
+                            WINDOWS 10
+                        </button>
+                    </div>
+                </div>
+
+                {/* Content */}
+                <div className="p-10">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                            {steps[os].map((step, idx) => (
+                                <div key={idx} className="flex gap-4 group">
+                                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-black text-sm group-hover:bg-blue-600 group-hover:text-white transition-all shadow-sm">
+                                        {idx + 1}
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-black text-gray-900 group-hover:text-blue-600 transition-colors uppercase tracking-tight">{step.title}</h4>
+                                        <p className="text-xs text-gray-500 font-medium leading-relaxed">{step.desc}</p>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100 relative overflow-hidden group">
+                           <div className="relative z-10">
+                                <h3 className="text-sm font-black text-gray-900 mb-4 flex items-center gap-2">
+                                    <FaTrophy className="text-amber-400" /> PRO TIP
+                                </h3>
+                                <p className="text-xs text-gray-600 font-medium leading-relaxed mb-4">
+                                    Look for voices that mention <span className="text-blue-600 font-bold italic">"Natural"</span> in the settings. These are high-quality AI voices provided for free by Microsoft.
+                                </p>
+                                <div className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                                    <p className="text-[10px] text-gray-400 font-black uppercase tracking-widest mb-2 flex items-center gap-2">
+                                        <FaTools /> Integration
+                                    </p>
+                                    <p className="text-[11px] text-gray-600 font-bold leading-snug">
+                                        Once installed in Windows, they automatically appear in the <span className="text-blue-600">"Speaking Voice"</span> dropdown of this app.
+                                    </p>
+                                </div>
+                           </div>
+                           <FaWindows className="absolute -bottom-8 -right-8 text-9xl text-gray-100/50 rotate-12 group-hover:rotate-0 transition-transform duration-700" />
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={onClose}
+                        className="w-full mt-10 py-4 bg-gray-900 text-white rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-black transition-all shadow-xl active:scale-95"
+                    >
+                        GO BACK TO SETTINGS
                     </button>
                 </div>
             </div>

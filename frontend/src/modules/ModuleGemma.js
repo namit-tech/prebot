@@ -192,8 +192,8 @@ class ModuleGemma extends BaseModule {
   }
 
   async processWithOllama(question) {
-    const noEmoji = "Do not use emojis in your response. Keep the tone professional.";
-    const userContext = localStorage.getItem('ai_system_instructions') || "You are a helpful and professional AI assistant for webinars.";
+    const noEmoji = "Do not use emojis in your response. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis.";
+    const userContext = localStorage.getItem('ai_system_instructions') || "You are a helpful, professional AI assistant. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud.";
     
     // 1. Maintain the Sliding Window (Short-term Memory)
     this.chatHistory.push({ role: 'user', content: question });
@@ -227,6 +227,7 @@ class ModuleGemma extends BaseModule {
         ...this.chatHistory
     ];
 
+    console.log(`[GemmaModule] 🧠 SYSTEM PERSONA: "${userContext.substring(0, 50)}..."`);
     console.log('[GemmaModule] Generating response using /api/chat (Memory Enabled)');
 
     const response = await fetch(`${this.ollamaUrl}/api/chat`, {

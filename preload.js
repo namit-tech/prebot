@@ -167,6 +167,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   whisperAuditHardware: () => ipcRenderer.invoke('whisper:audit-hardware'),
   whisperCheckSetup: () => ipcRenderer.invoke('whisper:check-setup'),
   whisperDownloadModel: () => ipcRenderer.invoke('whisper:download-model'),
+  getSystemSpecs: () => ipcRenderer.invoke('get-system-specs'),
   onWhisperProgress: (callback) => {
     const subscription = (event, data) => callback(data);
     ipcRenderer.on('whisper-setup-progress', subscription);

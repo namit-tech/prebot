@@ -44,10 +44,9 @@ const PredefinedAdmin = () => {
     }
     
     try {
-      // Answer is now mandatory for Predefined Module
       const answerVal = formData.answer;
 
-      if (!answerVal) {
+      if (!hasAIBrain && !answerVal) {
         alert('Please provide an answer for the predefined question.');
         return;
       }
@@ -228,17 +227,19 @@ const PredefinedAdmin = () => {
             />
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Answer
-            </label>
-            <textarea
-              value={formData.answer}
-              onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
-              className="input-field min-h-[100px]"
-              required
-            />
-          </div>
+          {!hasAIBrain && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Answer
+              </label>
+              <textarea
+                value={formData.answer}
+                onChange={(e) => setFormData({ ...formData, answer: e.target.value })}
+                className="input-field min-h-[100px]"
+                required={!hasAIBrain}
+              />
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -272,7 +273,7 @@ const PredefinedAdmin = () => {
               <div className="flex justify-between items-start">
                 <div className="flex-1">
                   <p className="font-semibold text-gray-900">{q.question}</p>
-                  <p className="text-sm text-gray-600 mt-1">{q.answer}</p>
+                  {!hasAIBrain && q.answer && <p className="text-sm text-gray-600 mt-1">{q.answer}</p>}
                   <span className="inline-block mt-2 px-2 py-1 bg-gray-100 text-gray-700 text-xs rounded">
                     {q.category}
                   </span>

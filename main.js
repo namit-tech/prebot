@@ -480,6 +480,32 @@ ipcMain.handle('get-machine-id', () => {
     return 'fallback-machine-id-' + Date.now();
   }
 });
+ 
+// IPC: Get System Specifications for Performance Monitoring
+ipcMain.handle('get-system-specs', async () => {
+    try {
+        const cpus = os.cpus();
+        const cpuModel = cpus.length > 0 ? cpus[0].model : 'Unknown Processor';
+        const coreCount = cpus.length;
+        const totalRAM = Math.round(os.totalmem() / (1024 * 1024 * 1024)); // Convert to GB
+        const platform = os.platform();
+        const arch = os.arch();
+
+        return {
+            success: true,
+            specs: {
+                cpuModel,
+                coreCount,
+                totalRAM,
+                platform,
+                arch
+            }
+        };
+    } catch (error) {
+        console.error('[Main] Error fetching system specs:', error);
+        return { success: false, error: error.message };
+    }
+});
 
 ipcMain.handle('set-user-session', async (event, userData) => {
   console.log('🔄 [Main] Received set-user-session request:', userData?.email);
@@ -540,8 +566,8 @@ ipcMain.handle('play-hologram-video', async (event, video) => {
 
     // Trigger PC2 Browser Server (if running)
     if (pc2Server) {
-        console.log('🌐 Triggering PC2 Browser Display...');
-        pc2Server.startAnimation();
+        console.log('🌐 Triggering PC2 Browser Display with dynamic video...');
+        pc2Server.startAnimation(video);
     }
 
     // Check if VLC is available

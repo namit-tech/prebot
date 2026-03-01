@@ -14,8 +14,8 @@ class WhisperSetup {
     constructor() {
         this.isDownloading = false;
         this.downloadProgress = 0;
-        this.modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin';
-        this.modelName = 'ggml-small.bin';
+        this.modelUrl = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin';
+        this.modelName = 'ggml-base.en.bin';
     }
 
     async detectHardware() {
@@ -61,8 +61,8 @@ class WhisperSetup {
     }
 
     getModelPath() {
-        const userDataPath = app.getPath('userData');
-        return path.join(userDataPath, 'assets', 'whisper', this.modelName);
+        let basePath = app.isPackaged ? app.getPath('userData') : __dirname;
+        return path.join(basePath, 'assets', 'whisper', this.modelName);
     }
 
     async checkSetup() {
@@ -71,8 +71,8 @@ class WhisperSetup {
         
         if (exists) {
             const stats = fs.statSync(modelPath);
-            // Small model should be around 480MB
-            const isComplete = stats.size > 400 * 1024 * 1024; 
+            // ggml-base.en.bin is ~145MB. Using 100MB threshold for safety.
+            const isComplete = stats.size > 100 * 1024 * 1024; 
             return { exists: true, isComplete, path: modelPath };
         }
         

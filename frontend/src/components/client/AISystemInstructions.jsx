@@ -11,7 +11,9 @@ const AISystemInstructions = () => {
       setInstructions(saved);
     } else {
       // Default persona
-      setInstructions("You are a helpful, professional AI assistant. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud.");
+      const defaultInstructions = "You are a helpful, professional AI assistant. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud.";
+      setInstructions(defaultInstructions);
+      localStorage.setItem('ai_system_instructions', defaultInstructions);
     }
   }, []);
 

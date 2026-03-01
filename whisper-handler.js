@@ -13,23 +13,18 @@ class WhisperHandler extends EventEmitter {
     }
 
     getPaths() {
-        let basePath = __dirname;
-        if (app.isPackaged) {
-            basePath = app.getPath('userData');
-        }
-
-        const whisperDir = path.join(basePath, 'assets', 'whisper');
-
-        // whisper-cli.exe for batch transcription (highest accuracy)
+        // Core resources (exe) should be in app directory
+        const appPath = __dirname;
+        const whisperDir = path.join(appPath, 'assets', 'whisper');
         const cliPath = path.join(whisperDir, 'Release', 'whisper-cli.exe');
-        const modelPath = path.join(whisperDir, 'ggml-small.bin');
 
-        // Fallback: check userData explicitly
-        const userModelPath = path.join(app.getPath('userData'), 'assets', 'whisper', 'ggml-small.bin');
+        // Model can be in project root (dev) or userData (setup via app)
+        const primaryModelPath = path.join(whisperDir, 'ggml-base.en.bin');
+        const userDataModelPath = path.join(app.getPath('userData'), 'assets', 'whisper', 'ggml-base.en.bin');
 
         return {
             exePath: cliPath,
-            modelPath: fs.existsSync(modelPath) ? modelPath : userModelPath,
+            modelPath: fs.existsSync(primaryModelPath) ? primaryModelPath : userDataModelPath,
             whisperDir
         };
     }
@@ -68,13 +63,13 @@ class WhisperHandler extends EventEmitter {
 
         this.isActive = true;
         this.emit('status', 'PROCESSING');
-        this.emit('diag', `Transcribing audio (${threads} threads, beam 8)...`);
+        this.emit('diag', `Transcribing audio (${threads} threads, beam 5)...`);
 
         return new Promise((resolve) => {
             const args = [
                 '-m', modelPath,
                 '-t', threads.toString(),
-                '--beam-size', '8',
+                '--beam-size', '2',
                 '--language', language,
                 '--no-timestamps',
                 '-f', wavPath

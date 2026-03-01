@@ -103,7 +103,7 @@ const WhisperSetupWizard = ({ onComplete, onSkip }) => {
                             </div>
 
                             <div className="text-gray-600 text-center">
-                                <p className="text-sm mb-4">We've selected the **Small Neural Model** ({hardware.hasNvidia ? 'GPU Accelerated' : 'CPU Optimized'}) for your system.</p>
+                                <p className="text-sm mb-4">We've selected the **Fast Neural Model** ({hardware.hasNvidia ? 'GPU Accelerated' : 'CPU Optimized'}) for your system.</p>
                                 
                                 <div className="bg-blue-50 p-4 rounded-xl text-left border border-blue-100">
                                     <ul className="text-xs space-y-2 text-blue-700">

@@ -10,6 +10,8 @@ class PC2Server {
         this.animationProcess = null;
         this.browserOpened = false; // Track if browser is already open
         this.currentAction = 'stop'; // Initialize current action
+        this.runId = 0; // Unique ID to force re-trigger when action is already 'start'
+        this.currentVideo = null; // Store whatever video was just requested to play
         this.dataDir = dataDir || __dirname; // Use provided data directory or fallback to __dirname
         this.videosDir = videosDir || path.join(__dirname, 'assets', 'videos'); // Use provided videos directory
         this.setupServer();
@@ -80,78 +82,62 @@ class PC2Server {
         // Animation status endpoint (for display page polling)
         this.currentAction = 'stop';
         expressApp.get('/api/animation-status', (req, res) => {
-            res.json({ action: this.currentAction });
+            res.json({ action: this.currentAction, runId: this.runId });
         });
         
-        // Primary video endpoint (for PC2 display to get primary video)
+        // Primary video endpoint (for PC2 display to get whatever video is currently playing)
         expressApp.get('/api/primary-video', (req, res) => {
             try {
-                const fs = require('fs');
-                // main.js saves to userData/primary-video.json
-                // this.dataDir is userData/data, so go up one level
-                const userDataPath = path.join(this.dataDir, '..');
-                const primaryFile = path.join(userDataPath, 'primary-video.json');
-                
-                if (fs.existsSync(primaryFile)) {
-                    const fileContent = fs.readFileSync(primaryFile, 'utf8');
-                    const primaryVideo = JSON.parse(fileContent);
-                    
-                    if (primaryVideo) {
-                        // Extract filename
-                        let videoFileName = primaryVideo.name; // Use name as filename usually matches
-                        if (primaryVideo.path) {
-                             // If full path is stored, extract filename
-                             if (primaryVideo.path.includes('/')) {
-                                videoFileName = primaryVideo.path.split('/').pop();
-                             } else if (primaryVideo.path.includes('\\')) {
-                                videoFileName = primaryVideo.path.split('\\').pop();
-                             }
-                        }
-                        
-                        // Check existence
-                        const writableVideoPath = path.join(this.videosDir, videoFileName);
-                        const appVideoPath = path.join(__dirname, 'assets', 'videos', videoFileName);
-                        const videoExists = fs.existsSync(writableVideoPath) || fs.existsSync(appVideoPath);
-                        
-                        const videoInfo = {
-                            ...primaryVideo,
-                            serverPath: `/assets/videos/${videoFileName}`,
-                            filename: videoFileName,
-                            exists: videoExists
-                        };
-                        
-                        console.log(`📹 Serving primary video (from primary-video.json): ${primaryVideo.name}`);
-                        res.json({ video: videoInfo });
-                    } else {
-                        console.log('ℹ️ Primary video file empty or invalid');
-                        res.json({ video: null });
+                if (this.currentVideo) {
+                    const fs = require('fs');
+                    let videoFileName = this.currentVideo.name;
+                    if (this.currentVideo.path) {
+                        videoFileName = path.basename(this.currentVideo.path);
                     }
+                    
+                    const writableVideoPath = path.join(this.videosDir, videoFileName);
+                    const appVideoPath = path.join(__dirname, 'assets', 'videos', videoFileName);
+                    const videoExists = fs.existsSync(writableVideoPath) || fs.existsSync(appVideoPath);
+                    
+                    const encodedFileName = encodeURIComponent(videoFileName);
+                    
+                    const videoInfo = {
+                        ...this.currentVideo,
+                        serverPath: `/api/video-stream/${encodedFileName}`,
+                        filename: videoFileName,
+                        exists: videoExists
+                    };
+                    
+                    console.log(`📹 Serving dynamic hologram video: ${this.currentVideo.name}`);
+                    res.json({ video: videoInfo });
                 } else {
-                    // Fallback to old video-storage.json method (just in case)
-                    const storageFile = path.join(this.dataDir, 'video-storage.json');
-                     if (fs.existsSync(storageFile)) {
-                        const fileContent = fs.readFileSync(storageFile, 'utf8');
-                        const stored = JSON.parse(fileContent);
-                        const videos = stored.videos || [];
-                        const primaryVideo = videos.find(v => v.isPrimary);
-                        
-                        if (primaryVideo) {
-                             // ... (same logic as before logic, simplified for brevity)
-                             let videoFileName = primaryVideo.path ? (primaryVideo.path.split(/[/\\]/).pop()) : primaryVideo.name;
-                             res.json({ video: { ...primaryVideo, serverPath: `/assets/videos/${videoFileName}`, filename: videoFileName } });
-                             return;
-                        }
-                    }
-                    
-                    console.log('ℹ️ No primary video found (primary-video.json missing)');
+                    console.log('ℹ️ No dynamic video currently set for display');
                     res.json({ video: null });
                 }
             } catch (error) {
-                console.error('Error loading primary video:', error);
+                console.error('Error serving dynamic hologram video:', error);
                 res.json({ video: null });
             }
         });
         
+
+        // Dedicated video streaming route to bypass any express static bugs
+        expressApp.get('/api/video-stream/:filename', (req, res) => {
+            const fs = require('fs');
+            const filename = decodeURIComponent(req.params.filename);
+            
+            const writableVideoPath = path.join(this.videosDir, filename);
+            const appVideoPath = path.join(__dirname, 'assets', 'videos', filename);
+            
+            if (fs.existsSync(writableVideoPath)) {
+                return res.sendFile(writableVideoPath);
+            } else if (fs.existsSync(appVideoPath)) {
+                return res.sendFile(appVideoPath);
+            } else {
+                return res.status(404).send('Video not found');
+            }
+        });
+
         // Serve animation display page
         expressApp.get('/display', (req, res) => {
             res.sendFile(path.join(__dirname, 'pc2-display.html'));
@@ -216,8 +202,13 @@ class PC2Server {
         this.browserOpened = true;
     }
     
-    startAnimation() {
+    startAnimation(videoConfig = null) {
         console.log('🎬 Starting animation... (immediate)');
+        this.runId = Date.now();
+        if (videoConfig) {
+            this.currentVideo = videoConfig;
+            console.log(`🎬 Received dynamic video config for: ${videoConfig.name}`);
+        }
         this.currentAction = 'start';
         // No need to open browser, it's already open
         // The display page will poll for animation status and play video immediately

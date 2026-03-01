@@ -6,6 +6,7 @@ const VideoManagement = () => {
   const [primaryVideo, setPrimaryVideo] = useState(null);
   const [processingVideo, setProcessingVideo] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [saveStatus, setSaveStatus] = useState(null);
 
   useEffect(() => {
      
@@ -20,12 +21,12 @@ const VideoManagement = () => {
     
     const storedPrimary = localStorage.getItem('primary_video');
     if (storedPrimary) {
-      setPrimaryVideo(storedPrimary);
+      setPrimaryVideo(Number(storedPrimary));
     }
 
     const storedProcessing = localStorage.getItem('processing_video');
     if (storedProcessing) {
-      setProcessingVideo(storedProcessing);
+      setProcessingVideo(Number(storedProcessing));
     }
   };
 
@@ -57,6 +58,8 @@ const VideoManagement = () => {
         const updatedVideos = [...videos, newVideo];
         setVideos(updatedVideos);
         localStorage.setItem('videos', JSON.stringify(updatedVideos));
+        setSaveStatus('Video Uploaded Successfully');
+        setTimeout(() => setSaveStatus(null), 3000);
       } else {
         // Browser fallback - convert to base64
         const reader = new FileReader();
@@ -73,6 +76,8 @@ const VideoManagement = () => {
           const updatedVideos = [...videos, newVideo];
           setVideos(updatedVideos);
           localStorage.setItem('videos', JSON.stringify(updatedVideos));
+          setSaveStatus('Video Uploaded Successfully');
+          setTimeout(() => setSaveStatus(null), 3000);
         };
         reader.readAsDataURL(file);
       }
@@ -88,10 +93,14 @@ const VideoManagement = () => {
     setPrimaryVideo(videoId);
     localStorage.setItem('primary_video', videoId);
     
+    setSaveStatus('Primary video synchronized successfully');
+    setTimeout(() => setSaveStatus(null), 3000);
+    
     // Notify Electron if available
     if (isElectron() && window.electronAPI) {
       const video = videos.find(v => v.id === videoId);
       if (video) {
+        console.log('✅ Set Primary Video:', video.name);
         window.electronAPI.setPrimaryVideo(video);
       }
     }
@@ -100,6 +109,14 @@ const VideoManagement = () => {
   const setAsProcessing = (videoId) => {
     setProcessingVideo(videoId);
     localStorage.setItem('processing_video', videoId);
+    
+    setSaveStatus('Thinking video synchronized successfully');
+    setTimeout(() => setSaveStatus(null), 3000);
+    
+    const video = videos.find(v => v.id === videoId);
+    if (video) {
+        console.log('✅ Set Thinking Video:', video.name);
+    }
   };
 
   const deleteVideo = (videoId) => {
@@ -153,59 +170,95 @@ const VideoManagement = () => {
       </div>
 
       {videos.length === 0 ? (
-        <div className="text-center py-12 text-gray-500">
-          <p className="text-lg mb-2">No videos uploaded yet</p>
-          <p className="text-sm">Click "Upload Video" to add your first video</p>
+        <div className="text-center py-12 text-gray-500 bg-slate-50 rounded-3xl border border-dashed border-slate-200">
+          <p className="text-lg font-bold text-slate-700 mb-2">No videos uploaded yet</p>
+          <p className="text-xs uppercase font-black tracking-widest text-slate-400">Click "+ Upload Video" to begin</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {videos.map((video) => (
-            <div
-              key={video.id}
-              className={`border-2 rounded-lg p-4 ${
-                primaryVideo === video.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200'
-              }`}
-            >
-              <div className="mb-2">
-                <h3 className="font-semibold truncate">{video.name}</h3>
-                <p className="text-sm text-gray-500">{formatFileSize(video.size)}</p>
-              </div>
-              
-              <div className="flex gap-2 mb-2 flex-wrap">
-                {primaryVideo === video.id && (
-                  <span className="px-2 py-1 bg-blue-600 text-white text-[10px] font-bold rounded uppercase">Primary</span>
-                )}
-                {processingVideo === video.id && (
-                  <span className="px-2 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded uppercase">Processing</span>
-                )}
-              </div>
-              
-              <div className="flex gap-2 mt-4 flex-wrap">
-                {primaryVideo !== video.id && (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {videos.map((video) => {
+            const isPrimary = primaryVideo === video.id;
+            const isThinking = processingVideo === video.id;
+            
+            return (
+              <div
+                key={video.id}
+                className={`relative group rounded-[1.5rem] p-4 transition-all duration-300 border-2 overflow-hidden shadow-sm hover:shadow-md ${
+                  isPrimary 
+                    ? 'border-blue-600 bg-blue-50/30 ring-4 ring-blue-500/10' 
+                    : isThinking 
+                    ? 'border-indigo-600 bg-indigo-50/30 ring-4 ring-indigo-500/10'
+                    : 'border-slate-100 bg-white hover:border-slate-200'
+                }`}
+              >
+                {/* Header Info */}
+                <div className="mb-4">
+                  <div className="flex items-center justify-between mb-1">
+                    <h3 className={`font-black text-sm transition-colors ${isPrimary ? 'text-blue-900' : isThinking ? 'text-indigo-900' : 'text-slate-800'}`}>
+                      {video.name.length > 25 ? video.name.substring(0, 22) + '...' : video.name}
+                    </h3>
+                  </div>
+                  <p className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
+                    {formatFileSize(video.size)} • {new Date(video.createdAt).toLocaleDateString()}
+                  </p>
+                </div>
+                
+                {/* Badges Overlay */}
+                <div className="flex gap-2 mb-4">
+                  {isPrimary && (
+                    <span className="px-2 py-0.5 bg-blue-600 text-white text-[9px] font-black rounded-lg uppercase tracking-widest shadow-lg shadow-blue-200">Primary</span>
+                  )}
+                  {isThinking && (
+                    <span className="px-2 py-0.5 bg-indigo-600 text-white text-[9px] font-black rounded-lg uppercase tracking-widest shadow-lg shadow-indigo-200">Thinking</span>
+                  )}
+                </div>
+                
+                {/* Control Actions */}
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-100">
+                  {!isPrimary && (
+                    <button
+                      onClick={() => setAsPrimary(video.id)}
+                      className="flex-1 px-3 py-2 bg-slate-50 hover:bg-blue-600 text-slate-600 hover:text-white text-[10px] font-black rounded-xl transition-all uppercase tracking-widest border border-slate-100 hover:border-blue-600 active:scale-95"
+                    >
+                      Primary
+                    </button>
+                  )}
+                  {!isThinking && (
+                    <button
+                      onClick={() => setAsProcessing(video.id)}
+                      className="flex-1 px-3 py-2 bg-slate-50 hover:bg-indigo-600 text-slate-600 hover:text-white text-[10px] font-black rounded-xl transition-all uppercase tracking-widest border border-slate-100 hover:border-indigo-600 active:scale-95"
+                    >
+                      Thinking
+                    </button>
+                  )}
                   <button
-                    onClick={() => setAsPrimary(video.id)}
-                    className="flex-1 px-3 py-1 bg-blue-600 text-white text-xs font-bold rounded hover:bg-blue-700 transition-colors"
+                    onClick={() => deleteVideo(video.id)}
+                    className="p-2 bg-red-50 text-red-500 hover:bg-red-600 hover:text-white text-[10px] font-black rounded-xl transition-all border border-red-100 hover:border-red-600 active:scale-95"
+                    title="Delete Video"
                   >
-                    PRIMARY
+                    DELETE
                   </button>
-                )}
-                {processingVideo !== video.id && (
-                  <button
-                    onClick={() => setAsProcessing(video.id)}
-                    className="flex-1 px-3 py-1 bg-indigo-600 text-white text-xs font-bold rounded hover:bg-indigo-700 transition-colors"
-                  >
-                    THINKING
-                  </button>
-                )}
-                <button
-                  onClick={() => deleteVideo(video.id)}
-                  className="px-3 py-1 bg-red-50 text-red-600 text-xs font-bold rounded hover:bg-red-600 hover:text-white transition-all"
-                >
-                  DELETE
-                </button>
+                </div>
               </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* --- SUCCESS TOAST (CENTERED MODEL) --- */}
+      {saveStatus && (
+        <div className="fixed inset-0 z-[2000] flex items-center justify-center pointer-events-none animate-in fade-in zoom-in duration-300">
+          <div className="bg-white/95 backdrop-blur-2xl border border-emerald-500/20 px-10 py-8 rounded-[2.5rem] shadow-[0_30px_60px_-15px_rgba(16,185,129,0.25)] flex flex-col items-center gap-5 text-center">
+            <div className="w-16 h-16 bg-emerald-500 text-white rounded-[1.25rem] flex items-center justify-center text-3xl shadow-xl shadow-emerald-200 animate-bounce">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
             </div>
-          ))}
+            <div>
+              <h3 className="text-xl font-black text-slate-900 tracking-tight leading-none mb-2">Success!</h3>
+              <p className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.2em]">{saveStatus}</p>
+            </div>
+          </div>
         </div>
       )}
 
