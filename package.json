@@ -13,6 +13,7 @@
     "init:modules": "cd backend && npm run init:modules",
     "deploy:vps": "cd backend && ./deploy.sh",
     "build-win": "node scripts/build-win-robust.js",
+    "build:msix": "electron-builder --win appx",
     "lint": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src",
     "lint:fix": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src --fix"
   },
@@ -52,6 +53,9 @@
   },
   "build": {
     "compression": "store",
+    "asarUnpack": [
+      "assets/whisper/**/*"
+    ],
     "appId": "com.prebot.offline",
     "productName": "Offline AI Assistant",
     "directories": {
@@ -89,6 +93,12 @@
             "x64",
             "ia32"
           ]
+        },
+        {
+          "target": "appx",
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico",
@@ -104,6 +114,13 @@
     },
     "portable": {
       "artifactName": "${productName} Portable ${version} ${arch}.${ext}"
+    },
+    "appx": {
+      "publisher": "CN=Development-Test-Account",
+      "identityName": "PreBot.Offline.AI.Assistant",
+      "publisherDisplayName": "Namit Tech",
+      "displayName": "PreBot AI",
+      "languages": ["en-US"]
     }
   }
 }

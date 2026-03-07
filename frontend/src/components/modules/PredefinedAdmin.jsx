@@ -4,7 +4,7 @@ import { useAuth } from '../../context/AuthContext';
 import * as XLSX from 'xlsx';
 
 const PredefinedAdmin = () => {
-  const { getModuleInstance } = useModule();
+  const { getModuleInstance, activeModule } = useModule();
   const { user } = useAuth();
   const [questions, setQuestions] = useState([]);
   const [showForm, setShowForm] = useState(false);
@@ -15,11 +15,10 @@ const PredefinedAdmin = () => {
     category: 'General'
   });
 
-  // Determine if user has AI Brain (Gemma/Gemini)
-  // If they do, they don't need to provide 'Answers' (AI will generate them)
-  const hasAIBrain = (user?.models || []).some(m => 
-    ['gemma', 'gemini'].includes(m.toLowerCase())
-  );
+  // Determine if user is currently using the AI Brain 
+  // If they are on AI Brain mode, they don't need to provide 'Answers' (AI will generate them)
+  // If they are specifically using the Predefined DB via the toggle, they must provide manual answers.
+  const hasAIBrain = activeModule !== 'predefined';
 
   const predefinedModule = getModuleInstance('predefined');
 

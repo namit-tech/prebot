@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { isElectron } from '../../utils/electron';
+import { FaInfoCircle } from 'react-icons/fa';
 
 const VideoManagement = () => {
   const [videos, setVideos] = useState([]);
@@ -7,6 +8,7 @@ const VideoManagement = () => {
   const [processingVideo, setProcessingVideo] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [saveStatus, setSaveStatus] = useState(null);
+  const [showInfoModal, setShowInfoModal] = useState(false);
 
   useEffect(() => {
      
@@ -156,7 +158,16 @@ const VideoManagement = () => {
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Video Management</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-2xl font-bold">Video Management</h2>
+          <button 
+            onClick={() => setShowInfoModal(true)}
+            className="text-gray-400 hover:text-blue-500 transition-colors"
+            title="What are Primary and Thinking videos?"
+          >
+            <FaInfoCircle className="text-xl" />
+          </button>
+        </div>
         <label className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 cursor-pointer">
           {uploading ? 'Uploading...' : '+ Upload Video'}
           <input
@@ -301,6 +312,55 @@ const VideoManagement = () => {
             </div>
         </div>
       </div>
+
+      {/* Video Role Information Modal */}
+      {showInfoModal && (
+        <div className="fixed inset-0 bg-black/50 z-[3000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-8 shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center text-2xl">
+                <FaInfoCircle />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">Understanding Video Roles</h3>
+            </div>
+            
+            <div className="space-y-6">
+              <section className="bg-indigo-50/50 p-4 rounded-xl border border-indigo-100">
+                <h4 className="text-indigo-900 font-bold mb-2 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-indigo-600"></span>
+                  Thinking Video
+                </h4>
+                <p className="text-gray-600 text-sm leading-relaxed">
+                  Its best use case is in <strong>AI Brain mode</strong> (Hands-free, Hardware Mute button, etc.). While the system takes time to understand your voice and generate a response, this video shows that the system is "thinking". It provides immediate visual feedback that the AI is working.
+                </p>
+              </section>
+
+              <div className="flex justify-center py-2 text-blue-400">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+                </svg>
+              </div>
+
+              <section className="bg-blue-50/50 p-4 rounded-xl border border-blue-100">
+                <h4 className="text-blue-900 font-bold mb-2 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-600"></span>
+                  Primary Video
+                </h4>
+                <p className="text-gray-600 text-sm leading-relaxed">
+                  This is your main avatar's video. As soon as the AI response is ready, the system <strong>automatically switches</strong> from the Thinking video to this Primary video to deliver the message.
+                </p>
+              </section>
+            </div>
+
+            <button
+              onClick={() => setShowInfoModal(false)}
+              className="mt-8 w-full bg-slate-900 text-white py-3 rounded-xl font-bold hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200"
+            >
+              I Understand
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

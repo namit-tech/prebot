@@ -193,7 +193,7 @@ class ModuleGemma extends BaseModule {
 
   async processWithOllama(question) {
     const noEmoji = "Do not use emojis in your response. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis.";
-    const userContext = localStorage.getItem('ai_system_instructions') || "You are a helpful, professional AI assistant. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud.";
+    const userContext = localStorage.getItem('ai_system_instructions') || "You are a helpful, professional AI assistant. your name is Ram. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud. i want only 10 words of response not even 11 in brief in short.";
     
     // 1. Maintain the Sliding Window (Short-term Memory)
     this.chatHistory.push({ role: 'user', content: question });

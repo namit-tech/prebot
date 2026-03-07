@@ -13,18 +13,31 @@ class WhisperHandler extends EventEmitter {
     }
 
     getPaths() {
-        // Core resources (exe) should be in app directory
-        const appPath = __dirname;
+        // Find the base path, handling packaged vs dev environments
+        let appPath = app.getAppPath();
+        
+        // Handle ASAR: External binaries and models CANNOT be read from inside app.asar
+        // If we are in asar, we must point to the unpacked version
+        if (appPath.includes('app.asar')) {
+            appPath = appPath.replace('app.asar', 'app.asar.unpacked');
+        }
+
         const whisperDir = path.join(appPath, 'assets', 'whisper');
         const cliPath = path.join(whisperDir, 'Release', 'whisper-cli.exe');
 
-        // Model can be in project root (dev) or userData (setup via app)
-        const primaryModelPath = path.join(whisperDir, 'ggml-base.en.bin');
-        const userDataModelPath = path.join(app.getPath('userData'), 'assets', 'whisper', 'ggml-base.en.bin');
+        // Model can be in resources (packed) or userData (setup via app)
+        const userDataPath = app.getPath('userData');
+        const userDataModelPath = path.join(userDataPath, 'assets', 'whisper', 'ggml-base.en-q5_1.bin');
+        
+        // Prefer userData (the downloaded one) as it's guaranteed to be on disk
+        const modelPath = fs.existsSync(userDataModelPath) ? userDataModelPath : path.join(whisperDir, 'ggml-base.en-q5_1.bin');
+
+        console.log(`[Whisper-Paths] Binary: ${cliPath}`);
+        console.log(`[Whisper-Paths] Model: ${modelPath}`);
 
         return {
             exePath: cliPath,
-            modelPath: fs.existsSync(primaryModelPath) ? primaryModelPath : userDataModelPath,
+            modelPath: modelPath,
             whisperDir
         };
     }

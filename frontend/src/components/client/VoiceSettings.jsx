@@ -26,6 +26,8 @@ const VoiceSettings = () => {
     const [filterLang, setFilterLang] = useState('All');
     const [saveStatus, setSaveStatus] = useState(null);
     const [showHelpModal, setShowHelpModal] = useState(false);
+    const [showGuideSyncModal, setShowGuideSyncModal] = useState(false);
+    const [showListeningLangModal, setShowListeningLangModal] = useState(false);
     const [helpOS, setHelpOS] = useState('win11'); // 'win10' or 'win11'
 
     // Initial Load
@@ -139,6 +141,85 @@ const VoiceSettings = () => {
                 </div>
             </div>
 
+            {/* Listening Language Info Modal */}
+            {showListeningLangModal && (
+                <div className="fixed inset-0 bg-black/50 z-[3000] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-[2.5rem] max-w-lg w-full p-8 shadow-2xl animate-in fade-in zoom-in duration-200 border border-slate-100">
+                        <div className="flex items-center gap-4 mb-6">
+                            <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center text-3xl shadow-sm">
+                                <FaInfoCircle />
+                            </div>
+                            <div>
+                                <h3 className="text-2xl font-black text-slate-900 tracking-tighter italic uppercase">Listening Accuracy</h3>
+                                <p className="text-amber-600 text-[10px] font-black uppercase tracking-widest">Accent & Language Optimization</p>
+                            </div>
+                        </div>
+                        
+                        <div className="space-y-4 text-slate-600 font-bold text-xs leading-relaxed">
+                            <p>
+                                This setting tells the Voice Assistant which <strong>specific language or accent</strong> you want it to prioritize while listening to your questions.
+                            </p>
+                            <p className="bg-amber-50 p-4 rounded-2xl border-l-4 border-amber-400 italic">
+                                "Setting your native language helps the AI understand your unique tone and pronunciation, ensuring much more accurate response generation."
+                            </p>
+                        </div>
+
+                        <button
+                            onClick={() => setShowListeningLangModal(false)}
+                            className="mt-8 w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-slate-200 active:scale-95"
+                        >
+                            Got it
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* Guide & Sync Info Modal */}
+            {showGuideSyncModal && (
+                <div className="fixed inset-0 bg-black/50 z-[3000] flex items-center justify-center p-4 backdrop-blur-sm">
+                    <div className="bg-white rounded-[2.5rem] max-w-lg w-full p-8 shadow-2xl animate-in fade-in zoom-in duration-200 border border-slate-100">
+                        <div className="flex items-center gap-4 mb-6">
+                            <div className="w-14 h-14 bg-indigo-100 text-indigo-600 rounded-2xl flex items-center justify-center text-3xl shadow-sm">
+                                <FaInfoCircle />
+                            </div>
+                            <div>
+                                <h3 className="text-2xl font-black text-slate-900 tracking-tighter italic">GUIDE & SYNC</h3>
+                                <p className="text-indigo-600 text-[10px] font-black uppercase tracking-widest">System Feedback & Connectivity</p>
+                            </div>
+                        </div>
+                        
+                        <div className="space-y-5">
+                            <section className="bg-indigo-50/50 p-5 rounded-3xl border border-indigo-100/50 group hover:border-indigo-300 transition-colors">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                                    <h4 className="text-slate-900 font-black text-xs uppercase tracking-wider">Voice Guide</h4>
+                                </div>
+                                <p className="text-slate-600 text-[11px] leading-relaxed font-bold">
+                                    When <strong className="text-indigo-700 underline underline-offset-4 decoration-2">OPEN</strong>, the AI speaks status updates like <span className="italic">"Listening"</span> or <span className="italic">"Processing"</span> for a premium AI-boosted experience. If <strong className="text-slate-700 underline underline-offset-4 decoration-2">CLOSED</strong>, feedback is provided via minimalist beep sounds.
+                                </p>
+                            </section>
+
+                            <section className="bg-emerald-50/50 p-5 rounded-3xl border border-emerald-100/50 group hover:border-emerald-300 transition-colors">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <div className="w-2 h-2 rounded-full bg-emerald-500"></div>
+                                    <h4 className="text-slate-900 font-black text-xs uppercase tracking-wider">Mobile Sync</h4>
+                                </div>
+                                <p className="text-slate-600 text-[11px] leading-relaxed font-bold">
+                                    When <strong className="text-emerald-700 underline underline-offset-4 decoration-2">ON</strong>, all 3 modules are active and your predefined questions will be synced to the <strong className="text-emerald-800">elloIndia mobile application</strong>. If <strong className="text-slate-700 underline underline-offset-4 decoration-2">OFF</strong>, only the Voice Assistant modules will operate.
+                                </p>
+                            </section>
+                        </div>
+
+                        <button
+                            onClick={() => setShowGuideSyncModal(false)}
+                            className="mt-8 w-full bg-slate-900 text-white py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-black transition-all shadow-xl shadow-slate-200 active:scale-95"
+                        >
+                            Understand Settings
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="p-5 space-y-5">
                 {/* Section 1: Interaction Intelligence */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -147,41 +228,22 @@ const VoiceSettings = () => {
                         <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
                              AI Personality Mode
                         </label>
-                        <div className="grid grid-cols-2 gap-3">
-                            <button
-                                onClick={() => setSettings({ ...settings, interactionMode: 'always_speak' })}
-                                className={`group p-3 rounded-xl border-2 text-left transition-all relative overflow-hidden ${
-                                    settings.interactionMode === 'always_speak' 
-                                        ? 'border-indigo-600 bg-indigo-50/50' 
-                                        : 'border-slate-100 hover:border-slate-200 bg-slate-50/30'
-                                }`}
-                            >
-                                <div className="flex items-center gap-3 relative z-10">
-                                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${settings.interactionMode === 'always_speak' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-200 text-slate-500'}`}>
-                                        <FaRobot size={14} />
-                                    </span>
-                                    <div>
-                                        <h3 className={`text-xs font-black ${settings.interactionMode === 'always_speak' ? 'text-indigo-900' : 'text-slate-700'}`}>Always Talk</h3>
-                                        <p className="text-[9px] text-slate-400 font-bold mt-0.5 whitespace-nowrap">Responds to every prompt</p>
-                                    </div>
-                                </div>
-                            </button>
-
+                        <div className="flex">
                             <button
                                 onClick={() => setSettings({ ...settings, interactionMode: 'adaptive' })}
-                                className={`group p-3 rounded-xl border-2 text-left transition-all relative overflow-hidden ${
-                                    (settings.interactionMode === 'adaptive' || !settings.interactionMode)
+                                className={`group p-3 rounded-xl border-2 text-left transition-all relative overflow-hidden flex-1 ${
+                                    (settings.interactionMode === 'adaptive' || !settings.interactionMode || settings.interactionMode === 'always_speak')
                                         ? 'border-indigo-600 bg-indigo-50/50' 
                                         : 'border-slate-100 hover:border-slate-200 bg-slate-50/30'
                                 }`}
                             >
                                 <div className="flex items-center gap-3 relative z-10">
-                                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${(settings.interactionMode === 'adaptive' || !settings.interactionMode) ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-200 text-slate-500'}`}>
+                                    <span className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${(settings.interactionMode === 'adaptive' || !settings.interactionMode || settings.interactionMode === 'always_speak') ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-200 text-slate-500'}`}>
                                         <FaBrain size={14} />
                                     </span>
                                     <div>
-                                        <h3 className={`text-xs font-black ${(settings.interactionMode === 'adaptive' || !settings.interactionMode) ? 'text-indigo-900' : 'text-slate-700'}`}>Smart Adaptive</h3>
-                                        <p className="text-[9px] text-slate-400 font-bold mt-0.5 whitespace-nowrap">Only speaks when spoken to</p>
+                                        <h3 className={`text-xs font-black ${(settings.interactionMode === 'adaptive' || !settings.interactionMode || settings.interactionMode === 'always_speak') ? 'text-indigo-900' : 'text-slate-700'}`}>Smart Adaptive</h3>
+                                        <p className="text-[9px] text-slate-400 font-bold mt-0.5 whitespace-nowrap">Voice only triggers when spoken to manually.</p>
                                     </div>
                                 </div>
                             </button>
@@ -191,7 +253,15 @@ const VoiceSettings = () => {
                     {/* Quick Toggles */}
                     <div className="bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm space-y-3">
                          <div className="flex items-center justify-between">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Guide & Sync</h4>
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                                Guide & Sync
+                                <button 
+                                    onClick={() => setShowGuideSyncModal(true)}
+                                    className="text-slate-300 hover:text-indigo-500 transition-colors"
+                                >
+                                    <FaInfoCircle size={10} />
+                                </button>
+                            </h4>
                          </div>
                          <div className="space-y-2">
                             {/* Voice Guide Toggle */}
@@ -233,7 +303,15 @@ const VoiceSettings = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {/* STT Language */}
                     <div className="bg-white rounded-2xl p-4 border border-slate-200/60 shadow-sm">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 block">Listening Language</label>
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3 flex items-center gap-2">
+                            Listening Language
+                            <button 
+                                onClick={() => setShowListeningLangModal(true)}
+                                className="text-slate-300 hover:text-amber-500 transition-colors"
+                            >
+                                <FaInfoCircle size={10} />
+                            </button>
+                        </label>
                         <select
                             value={settings.sttLanguage || 'en'}
                             onChange={(e) => setSettings({ ...settings, sttLanguage: e.target.value })}

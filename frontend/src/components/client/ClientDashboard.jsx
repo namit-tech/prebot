@@ -5,7 +5,7 @@ import SubscriptionStatus from '../dashboard/SubscriptionStatus';
 import ModuleSelector from '../dashboard/ModuleSelector';
 import VideoManagement from './VideoManagement';
 import QAManagement from './QAManagement';
-import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib, FaHandPaper, FaSignOutAlt, FaMicrochip, FaSdCard, FaExclamationTriangle, FaCheckCircle, FaInfoCircle, FaServer } from 'react-icons/fa';
+import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib, FaHandPaper, FaSignOutAlt, FaMicrochip, FaSdCard, FaExclamationTriangle, FaCheckCircle, FaInfoCircle, FaServer, FaHeadset, FaPhoneAlt, FaEnvelope } from 'react-icons/fa';
 import AISystemInstructions from './AISystemInstructions';
 import VoiceSettings from './VoiceSettings';
 import { isElectron } from '../../utils/electron';
@@ -36,12 +36,21 @@ const ClientDashboard = () => {
   const [isWakeWordListening, setIsWakeWordListening] = useState(false); // Hands-free: Waiting for speech
   const [systemSpecs, setSystemSpecs] = useState(null);
   const [showSpecsModal, setShowSpecsModal] = useState(false);
+  const [showSupportTooltip, setShowSupportTooltip] = useState(false);
 
   useEffect(() => {
     if (window.electronAPI?.getSystemSpecs) {
       window.electronAPI.getSystemSpecs().then(result => {
         if (result.success) setSystemSpecs(result.specs);
       });
+    }
+
+    // Initialize Default Persona: Ram
+    const savedInstructions = localStorage.getItem('ai_system_instructions');
+    if (!savedInstructions) {
+      console.log('[Dashboard] Initializing Default Persona: Ram');
+      const ramPersona = "You are a helpful, professional AI assistant. your name is Ram. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud. i want only 10 words of response not even 11 in brief in short.";
+      localStorage.setItem('ai_system_instructions', ramPersona);
     }
   }, []);
 
@@ -271,6 +280,10 @@ const ClientDashboard = () => {
             const cleaned = cleanTextForTTS(answer);
 
             const onFinishedSpeaking = () => {
+                // Stop the hologram video immediately when TTS stops
+                console.log('[Dashboard] 🎬 Stopping PRIMARY video (TTS ended)');
+                window.electronAPI?.stopHologramVideo();
+
                 // Wait for echo to dissipate before listening again
                 setTimeout(() => {
                     if (pipelineStartRef.current) {
@@ -279,8 +292,6 @@ const ClientDashboard = () => {
                         console.log(`[⏱️ TIMER] ═══ TOTAL PIPELINE: ${totalTime}s ═══`);
                         pipelineStartRef.current = null;
                     }
-                    console.log('[Dashboard] 🎬 Stopping PRIMARY video (TTS ended)');
-                    window.electronAPI?.stopHologramVideo();
                     resetBusyState('tts_finished');
                     // Auto-restart: use correct mode
                     autoRestartListening();
@@ -336,8 +347,8 @@ const ClientDashboard = () => {
   };
 
   const handleInteractionRequest = async (data) => {
-    const { question, providedAnswer, triggerVideo, inputType, requestId } = data;
-    const isAIModule = activeModule === 'gemma' || activeModule === 'gemini';
+    const { question, providedAnswer, answer, triggerVideo, inputType, requestId } = data;
+    const finalProvidedAnswer = providedAnswer || answer;
 
     try {
         // Environmental Noise Filter: 
@@ -363,11 +374,11 @@ const ClientDashboard = () => {
         // Play "Thinking" video on hologram while AI generates response (In case it wasn't triggered by Voice)
         startThinkingVideo();
 
-        // If we are in predefined mode, check for predefined answer FIRST
         let currentModule = activeModule;
         
-        if (!isAIModule) {
-            // Check if user has predefined Q&A
+        // --- 1. Check Predefined DB or Manual Provided Answer ---
+        // ONLY if the active module is actually 'predefined'. If it's an AI module, let the AI generate the answer!
+        if (activeModule === 'predefined') {
             const predefinedDataStr = localStorage.getItem('predefined_qa');
             if (predefinedDataStr) {
                 try {
@@ -376,52 +387,80 @@ const ClientDashboard = () => {
                     const match = QA.find(qa => qa.question.toLowerCase() === qLower);
                     
                     if (match && match.ai) {
+                        // It specifically demands an AI model (e.g. gemma instead of predefined)
                         console.log(`[Dashboard] Predefined answer requires AI: ${match.ai}`);
                         const loadResult = await loadModule(match.ai);
                         if (loadResult.success) {
                             currentModule = match.ai;
                         }
                     } else if (match && !match.ai) {
-                        console.log('[Dashboard] Found exact Predefined match without AI');
-                        await handleDesktopActions(match.answer, inputType || 'text');
-                        return; // Done
-                    } else if (!match) {
-                        // See if user has AI models to fallback to
-                        const models = user?.models || [];
-                        const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
-                        if (targetModel) {
-                            console.log(`[Dashboard] No predefined match, falling back to AI: ${targetModel}`);
-                            const loadResult = await loadModule(targetModel);
-                            if (loadResult.success) currentModule = targetModel;
+                        if (match.answer && match.answer.trim() !== '') {
+                            // We found an exact Predefined match WITH a manual answer -> Speak immediately!
+                            console.log('[Dashboard] Found exact Predefined match with manual answer');
+                            await handleDesktopActions(match.answer, inputType || 'text');
+                            return; // Done
                         } else {
-                            console.log('[Dashboard] Predefined mode active but no manual answer provided - skipping processing');
-                            setIsAIBusy(false);
-                            return;
+                            // The user added a Predefined Question but hid the answer (AI Brain Mode!)
+                            // We need to fetch an answer from the AI!
+                            console.log('[Dashboard] Found exact Predefined match but answer is empty (AI Brain) - Routing to AI');
+                            const models = user?.models || [];
+                            const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
+                            if (targetModel) {
+                                const loadResult = await loadModule(targetModel);
+                                if (loadResult.success) currentModule = targetModel;
+                            } else {
+                                 console.warn('[Dashboard] Empty predefined answer but no AI brain available to answer it.');
+                                 setIsAIBusy(false);
+                                 return;
+                            }
                         }
+                    } else if (!match) {
+                         // No match in predefined DB.
+                         // Did Mobile Sync provide an answer over the wire instead?
+                         if (finalProvidedAnswer) {
+                            console.log('[Dashboard] No predefined match, but using Mobile Sync Provided Answer');
+                            await handleDesktopActions(finalProvidedAnswer, inputType || 'text');
+                            return;
+                         }
+
+                         // See if user has AI models to fallback to
+                         const models = user?.models || [];
+                         const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
+                         
+                         if (targetModel) {
+                             console.log(`[Dashboard] No predefined match, falling back to AI: ${targetModel}`);
+                             const loadResult = await loadModule(targetModel);
+                             if (loadResult.success) currentModule = targetModel;
+                         } else {
+                             console.log('[Dashboard] Predefined mode active but no manual answer or QA provided - skipping processing');
+                             setIsAIBusy(false);
+                             return;
+                         }
                     }
                 } catch (e) {
                     console.error('Error parsing predefined QA', e);
                 }
-            } else if (providedAnswer) {
-                 await handleDesktopActions(providedAnswer, inputType || 'text');
+            } else if (finalProvidedAnswer) {
+                 // We don't have a Predefined DB, but we got a manual answer from Mobile Sync
+                 console.log('[Dashboard] Using Mobile Sync Provided Answer');
+                 await handleDesktopActions(finalProvidedAnswer, inputType || 'text');
                  return;
             } else {
-                console.log('[Dashboard] Predefined mode active but no manual answer or QA provided - skipping processing');
-                setIsAIBusy(false);
-                return;
-            }
-        } else {
-            // Already in AI mode, ensure module loaded
-            if (!currentModule) {
+                // We have no DB, no manual answer. Ensure an AI module is loaded.
                 const models = user?.models || [];
                 const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
                 if (targetModel) {
                     const loadResult = await loadModule(targetModel);
                     if (loadResult.success) currentModule = targetModel;
+                } else {
+                    console.log('[Dashboard] Predefined mode active but no manual answer or QA provided - skipping processing');
+                    setIsAIBusy(false);
+                    return;
                 }
             }
         }
 
+        // --- 2. If we reach here, we must generate a response using the active AI Module ---
         await new Promise(r => setTimeout(r, 600));
         const result = await processQuestion(question).catch(err => {
             console.error('[Dashboard] Question processing failed:', err);
@@ -450,13 +489,38 @@ const ClientDashboard = () => {
   // Auto-restart: use correct mode
   const autoRestartListening = () => {
     const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    
+    // If the mic wasn't actively listening when this response was triggered 
+    // (e.g., it came from Mobile Sync or a text input), DO NOT turn the mic on!
+    if (!handsFreeActiveRef.current) {
+       console.log('[Dashboard] Answer given from external trigger. Hands-free is off. Staying idle.');
+       if (isMonitoring || isListening) {
+          toggleVoiceAssistant();
+       }
+       return;
+    }
+
     if (vs.handsFreeMode) {
-      // Client demanded Continuous Conversation: Instead of wake word (P1), jump to Question (P2)
-      // We start it in "Follow-Up" mode to enforce the 5-second silence timeout!
-      console.log('[Dashboard] Entering 5-Second Follow-Up Mode...');
-      startQuestionRecording(true);
+      if (activeModule === 'predefined') {
+        console.log('[Dashboard] Predefined answer given. Going back to Wake Word instead of Follow-Up.');
+        startHandsFreeListening();
+      } else {
+        // Client demanded Continuous Conversation: Instead of wake word (P1), jump to Question (P2)
+        // We start it in "Follow-Up" mode to enforce the 5-second silence timeout!
+        console.log('[Dashboard] Entering 5-Second Follow-Up Mode...');
+        startQuestionRecording(true);
+      }
     } else {
-      toggleVoiceAssistant();
+      // PERSISTENT MONITORING: If we are in Mute-Trigger mode and the session is still active
+      console.log('[Dashboard] Returning to Mute-Monitoring state...');
+      if (isMonitoring || isListening) {
+         // Already in a voice state, just reset
+         setIsMonitoring(true);
+         setIsListening(false);
+      } else {
+         // Trigger the monitor again
+         toggleVoiceAssistant();
+      }
     }
   };
 
@@ -898,6 +962,7 @@ const ClientDashboard = () => {
     // If already active in any mode, stop everything
     if (isMonitoring || isListening || isWakeWordListening || (isTranscribing && isHandsFree)) {
       playBeep('stop');
+      handsFreeActiveRef.current = false; // END SESSION
       
       if (isHandsFree) {
         stopHandsFree();
@@ -925,11 +990,13 @@ const ClientDashboard = () => {
     if (isHandsFree) {
       // === HANDS-FREE MODE: Offline wake word via Whisper ===
       console.log('[Dashboard] 🎙️ Starting HANDS-FREE mode (offline wake word)...');
+      handsFreeActiveRef.current = true; // START SESSION
       startHandsFreeListening();
       return;
     }
 
     try {
+      handsFreeActiveRef.current = true; // START SESSION
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       });
@@ -1254,28 +1321,74 @@ const ClientDashboard = () => {
               >
                   <FaSignOutAlt className="text-xl group-hover:scale-110 transition-transform" />
               </button>
+
             </div>
           </div>
         </div>
       </header>
       <div className="bg-white border-b border-gray-200 sticky top-[81px] z-30">
         <div className="max-w-7xl mx-auto px-4">
-          <nav className="flex space-x-12">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => handleTabChange(tab.id)}
-                className={`py-5 px-2 border-b-4 font-black text-xs uppercase tracking-widest flex items-center transition-all ${
-                  activeTab === tab.id
-                    ? 'border-blue-600 text-blue-700'
-                    : 'border-transparent text-gray-400 hover:text-gray-600'
-                }`}
+          <div className="flex justify-between items-center">
+            <nav className="flex space-x-12">
+              {tabs.map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => handleTabChange(tab.id)}
+                  className={`py-5 px-2 border-b-4 font-black text-xs uppercase tracking-widest flex items-center transition-all ${
+                    activeTab === tab.id
+                      ? 'border-blue-600 text-blue-700'
+                      : 'border-transparent text-gray-400 hover:text-gray-600'
+                  }`}
+                >
+                  <span className="mr-3 text-lg opacity-80">{tab.icon}</span>
+                  {tab.name}
+                </button>
+              ))}
+            </nav>
+
+            {/* Relocated Support Badge */}
+            <div className="relative">
+              <button 
+                onMouseEnter={() => setShowSupportTooltip(true)}
+                onMouseLeave={() => setShowSupportTooltip(false)}
+                onClick={() => setShowSupportTooltip(!showSupportTooltip)}
+                className="flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-xl font-black text-[10px] uppercase tracking-wider shadow-lg hover:shadow-emerald-200 transition-all active:scale-95 group"
               >
-                <span className="mr-3 text-lg opacity-80">{tab.icon}</span>
-                {tab.name}
+                <FaHeadset className="text-sm group-hover:rotate-12 transition-transform" />
+                <span>Need Support?</span>
               </button>
-            ))}
-          </nav>
+
+              {showSupportTooltip && (
+                <div className="absolute top-full right-0 mt-3 w-64 bg-white rounded-2xl shadow-2xl border border-slate-100 p-4 z-[100] animate-in fade-in slide-in-from-top-2 duration-200">
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl transition-colors">
+                      <div className="w-8 h-8 bg-emerald-100 text-emerald-600 rounded-lg flex items-center justify-center">
+                        <FaPhoneAlt size={12} />
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1">Phone Support</p>
+                        <p className="text-xs font-black text-slate-700">9211133333</p>
+                      </div>
+                    </div>
+                    
+                    <div className="flex items-center gap-3 p-2 hover:bg-slate-50 rounded-xl transition-colors">
+                      <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-lg flex items-center justify-center">
+                        <FaEnvelope size={12} />
+                      </div>
+                      <div>
+                        <p className="text-[9px] font-black text-slate-400 uppercase leading-none mb-1">Email ID</p>
+                        <p className="text-xs font-black text-slate-700">info@elloindia.in</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3 pt-3 border-t border-slate-50 text-center">
+                    <p className="text-[9px] font-black text-indigo-600 uppercase tracking-tighter">Support available 11 am to 9pm</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       </div>
 

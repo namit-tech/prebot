@@ -7,7 +7,7 @@ import PredefinedAdmin from '../modules/PredefinedAdmin';
 import SetupWizard from '../common/SetupWizard';
 import OllamaSetupWizard from '../setup/OllamaSetupWizard';
 import WhisperSetupWizard from '../setup/WhisperSetupWizard';
-import { FaClipboardList, FaBrain, FaRobot } from 'react-icons/fa';
+import { FaClipboardList, FaBrain, FaRobot, FaInfoCircle } from 'react-icons/fa';
 
 const ModuleSelector = () => {
   const { availableModules, activeModule, loadModule, loading, error, clearError } = useModule();
@@ -16,6 +16,7 @@ const ModuleSelector = () => {
   const [showSetup, setShowSetup] = useState(false);
   const [showOllamaSetup, setShowOllamaSetup] = useState(false);
   const [showWhisperSetup, setShowWhisperSetup] = useState(false);
+  const [infoModal, setInfoModal] = useState(null); // 'predefined' or 'gemma'
   const [setupModel, setSetupModel] = useState(localStorage.getItem('ai_model') || 'gemma2:2b');
 
   useEffect(() => {
@@ -92,21 +93,32 @@ const ModuleSelector = () => {
             {availableModules.length > 1 && (
               <div className="flex p-1 bg-gray-100 rounded-xl mb-6 border border-gray-200">
                 {availableModules.filter(m => m.id !== 'predefined' || availableModules.some(am => am.id === 'predefined')).map((module) => (
-                  <button
-                    key={module.id}
-                    onClick={() => handleModuleSelect(module.id)}
-                    className={`flex-1 flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                      activeModule === module.id
-                        ? 'bg-white text-blue-600 shadow-sm ring-1 ring-gray-200'
-                        : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                    }`}
-                  >
-                    <span className="text-xl">{moduleIcons[module.id] || <FaRobot />}</span>
-                    {module.id === 'gemma' || module.id === 'gemini' ? 'AI Brain' : module.name}
-                    {activeModule === module.id && (
-                      <span className="ml-2 w-2 h-2 rounded-full bg-blue-500"></span>
-                    )}
-                  </button>
+                  <div key={module.id} className="flex-1 relative group">
+                    <button
+                      onClick={() => handleModuleSelect(module.id)}
+                      className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                        activeModule === module.id
+                          ? 'bg-white text-blue-600 shadow-sm ring-1 ring-gray-200'
+                          : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                      }`}
+                    >
+                      <span className="text-xl">{moduleIcons[module.id] || <FaRobot />}</span>
+                      {module.id === 'gemma' || module.id === 'gemini' ? 'AI Brain' : module.name}
+                      {activeModule === module.id && (
+                        <span className="ml-2 w-2 h-2 rounded-full bg-blue-500"></span>
+                      )}
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setInfoModal(module.id === 'predefined' ? 'predefined' : 'gemma');
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 p-1.5 rounded-full transition-colors z-10"
+                      title="Learn more about this module"
+                    >
+                      <FaInfoCircle className="text-base" />
+                    </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -195,6 +207,42 @@ const ModuleSelector = () => {
           onComplete={() => setShowWhisperSetup(false)}
           onSkip={() => setShowWhisperSetup(false)}
         />
+      )}
+
+      {/* Module Info Modal */}
+      {infoModal !== null && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl max-w-md w-full p-6 shadow-2xl">
+            <h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <span className="text-blue-500"><FaInfoCircle /></span>
+              {infoModal === 'predefined' ? 'Predefined Q&A Mode' : 'AI Brain Mode'}
+            </h3>
+            <div className="text-gray-600 text-sm leading-relaxed space-y-3">
+              {infoModal === 'predefined' ? (
+                <>
+                  <p>In this mode, there is <strong>no AI brain involved</strong>. This is designed for lightning-fast, static replies.</p>
+                  <p>You manually add the Questions and corresponding Answers in the "Manage Questions" section. When a user asks a matched question, the system will instantly deliver your exact predefined response along with the video you've set.</p>
+                </>
+              ) : (
+                <>
+                  <p>The AI Brain mode provides dynamic responses powered by standard or premium models.</p>
+                  <p>It operates in three distinct ways:</p>
+                  <ul className="list-disc pl-5 space-y-1 mt-2">
+                    <li><strong>Predefined Question, AI Answer:</strong> Lock in exactly what questions can be asked, but let the AI generate a conversational, dynamic response.</li>
+                    <li><strong>Hands-Free / Wake Word:</strong> Set a custom wake word. When spoken, the AI assistant automatically starts listening, processes your question, and responds dynamically with the video avatar.</li>
+                    <li><strong>Hardware Mute Toggle:</strong> Use your physical microphone mute button as a trigger. Unmute to speak your question, then mute to instantly stop listening and trigger the AI's response.</li>
+                  </ul>
+                </>
+              )}
+            </div>
+            <button
+              onClick={() => setInfoModal(null)}
+              className="mt-6 w-full btn-primary py-2 rounded-lg font-medium"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

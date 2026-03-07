@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain, dialog, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const ollamaSetup = require('./ollama-setup');
@@ -237,7 +237,8 @@ function createWindow() {
       })(),
       title: 'Offline AI Assistant',
       show: false, // Don't show until ready
-      titleBarStyle: 'default'
+      titleBarStyle: 'default',
+      autoHideMenuBar: true
     });
 
     // Check if index.html exists
@@ -271,6 +272,13 @@ function createWindow() {
       if (process.platform === 'darwin') {
         app.dock.show();
       }
+
+      // Register secret shortcut to toggle DevTools (Ctrl+Shift+I)
+      globalShortcut.register('CommandOrControl+Shift+I', () => {
+        if (mainWindow && mainWindow.isFocused()) {
+          mainWindow.webContents.toggleDevTools();
+        }
+      });
     });
 
     // Handle window closed
@@ -807,113 +815,7 @@ ipcMain.handle('read-document', async (event, filePath) => {
 
 // Create application menu
 function createMenu() {
-  const template = [
-    {
-      label: 'File',
-      submenu: [
-        {
-          label: 'New Session',
-          accelerator: 'CmdOrCtrl+N',
-          click: () => {
-            mainWindow.reload();
-          }
-        },
-        {
-          label: 'Exit',
-          accelerator: process.platform === 'darwin' ? 'Cmd+Q' : 'Ctrl+Q',
-          click: () => {
-            app.quit();
-          }
-        }
-      ]
-    },
-    {
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'selectall' }
-      ]
-    },
-    {
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        { role: 'resetZoom' },
-        { role: 'zoomIn' },
-        { role: 'zoomOut' },
-        { type: 'separator' },
-        { role: 'togglefullscreen' }
-      ]
-    },
-    {
-      label: 'Window',
-      submenu: [
-        { role: 'minimize' },
-        { role: 'close' }
-      ]
-    },
-    {
-      label: 'Help',
-      submenu: [
-        {
-          label: 'About Offline AI Assistant',
-          click: () => {
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'About Offline AI Assistant',
-              message: 'Offline AI Assistant v1.0.0',
-              detail: 'A completely offline AI assistant with predefined questions and answers, text-to-speech functionality, and animated AI face with lip-sync.\n\nBuilt with Electron and modern web technologies.',
-              buttons: ['OK']
-            });
-          }
-        },
-        {
-          label: 'Learn More',
-          click: () => {
-            shell.openExternal('https://github.com/your-repo/offline-ai-assistant');
-          }
-        }
-      ]
-    }
-  ];
-
-  // macOS specific menu adjustments
-  if (process.platform === 'darwin') {
-    template.unshift({
-      label: app.getName(),
-      submenu: [
-        { role: 'about' },
-        { type: 'separator' },
-        { role: 'services' },
-        { type: 'separator' },
-        { role: 'hide' },
-        { role: 'hideothers' },
-        { role: 'unhide' },
-        { type: 'separator' },
-        { role: 'quit' }
-      ]
-    });
-
-    // Window menu
-    template[4].submenu = [
-      { role: 'close' },
-      { role: 'minimize' },
-      { role: 'zoom' },
-      { type: 'separator' },
-      { role: 'front' }
-    ];
-  }
-
-  const menu = Menu.buildFromTemplate(template);
-  Menu.setApplicationMenu(menu);
+  Menu.setApplicationMenu(null);
 }
 
 // IPC handlers for communication with renderer process

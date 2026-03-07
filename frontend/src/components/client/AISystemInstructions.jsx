@@ -4,14 +4,15 @@ import { FaSave, FaExclamationTriangle, FaInfoCircle, FaMagic } from 'react-icon
 const AISystemInstructions = () => {
   const [instructions, setInstructions] = useState('');
   const [status, setStatus] = useState(null); // 'saving', 'saved', 'error'
+  const [showInfoModal, setShowInfoModal] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem('ai_system_instructions');
     if (saved) {
       setInstructions(saved);
     } else {
-      // Default persona
-      const defaultInstructions = "You are a helpful, professional AI assistant. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud.";
+      // Default persona: Ram
+      const defaultInstructions = "You are a helpful, professional AI assistant. your name is Ram. Keep your responses concise and direct. Do not use markdown symbols like asterisks (*) or underscores (_) for emphasis, as your responses will be read aloud. i want only 10 words of response not even 11 in brief in short.";
       setInstructions(defaultInstructions);
       localStorage.setItem('ai_system_instructions', defaultInstructions);
     }
@@ -54,8 +55,17 @@ const AISystemInstructions = () => {
           <div className="p-3 bg-white/20 rounded-xl">
             <FaMagic className="text-2xl" />
           </div>
-          <div>
-            <h2 className="text-2xl font-black tracking-tight">AI System Persona</h2>
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <h2 className="text-2xl font-black tracking-tight">AI System Persona</h2>
+              <button 
+                onClick={() => setShowInfoModal(true)}
+                className="text-blue-200 hover:text-white transition-colors"
+                title="What are system instructions?"
+              >
+                <FaInfoCircle className="text-xl" />
+              </button>
+            </div>
             <p className="text-blue-100 text-sm font-bold opacity-80 uppercase tracking-widest mt-1">Control how your assistant speaks and behaves</p>
           </div>
         </div>
@@ -120,7 +130,59 @@ const AISystemInstructions = () => {
                 Don't worry, the app will also automatically filter out most of these symbols for you!
             </p>
         </div>
-      </div>
+        </div>
+
+      {/* Instructions Info Modal */}
+      {showInfoModal && (
+        <div className="fixed inset-0 bg-black/50 z-[3000] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-lg w-full p-8 shadow-2xl animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center gap-3 mb-6 font-black uppercase tracking-tighter">
+              <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-xl flex items-center justify-center text-2xl">
+                <FaInfoCircle />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-900">System Boundaries</h3>
+            </div>
+            
+            <div className="space-y-4 text-gray-600 font-medium text-sm leading-relaxed">
+              <p>
+                Instructions act as the <strong>restrictive boundary</strong> for your AI model. They ensure the AI stays within the scope of your specific business needs.
+              </p>
+              
+              <ul className="space-y-3">
+                <li className="flex items-start gap-2">
+                  <div className="mt-1 bg-blue-500 rounded-full p-0.5">
+                    <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7"></path></svg>
+                  </div>
+                  <span><strong>Response Tone:</strong> Control the pitch, attitude, and word length of generations.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="mt-1 bg-blue-500 rounded-full p-0.5">
+                    <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7"></path></svg>
+                  </div>
+                  <span><strong>Business Behavior:</strong> Set nature of creating responses as per your specific business niche.</span>
+                </li>
+                <li className="flex items-start gap-2">
+                  <div className="mt-1 bg-blue-500 rounded-full p-0.5">
+                    <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" d="M5 13l4 4L19 7"></path></svg>
+                  </div>
+                  <span><strong>Safety:</strong> Prevent the use of derogatory terms and verify model identity.</span>
+                </li>
+              </ul>
+
+              <p className="bg-slate-50 p-4 rounded-xl border-l-4 border-blue-500 italic mt-4">
+                "Set the behavior once, and the AI brain will honor these rules for every single response."
+              </p>
+            </div>
+
+            <button
+              onClick={() => setShowInfoModal(false)}
+              className="mt-8 w-full bg-slate-900 text-white py-4 rounded-xl font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-lg active:scale-95"
+            >
+              Close Information
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
