@@ -5,7 +5,7 @@ import { FaRobot, FaCheckCircle, FaExclamationTriangle, FaSpinner, FaCog } from 
  * Ollama Setup Wizard
  * Auto-configures Ollama CORS for first-time users
  */
-const OllamaSetupWizard = ({ onComplete, onSkip }) => {
+const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) => {
   const [step, setStep] = useState('checking'); // checking, needs-setup, configuring, model-selection, pulling-model, success, error
   const [setupStatus, setSetupStatus] = useState(null);
   const [configSteps, setConfigSteps] = useState([]);
@@ -33,15 +33,15 @@ const OllamaSetupWizard = ({ onComplete, onSkip }) => {
       }
     });
 
-    const preferred = localStorage.getItem('ai_model') || 'gemma2:2b';
-    checkSetup(preferred);
+    const target = defaultTarget || localStorage.getItem('ai_model') || 'gemma3:1b';
+    checkSetup(target);
 
     return () => cleanup();
-  }, []);
+  }, [defaultTarget]);
   
   // Polling removed to prevent race conditions with installer cleanup.
   // The handleInstall promise itself will handle the transition.
-
+  
   const handleInstall = async () => {
     console.log('Wizard: handleInstall clicked');
     try {
@@ -54,8 +54,8 @@ const OllamaSetupWizard = ({ onComplete, onSkip }) => {
       
       if (result.success) {
         // Refresh setup status and move to next logical step
-        const preferred = localStorage.getItem('ai_model') || 'gemma2:2b';
-        await checkSetup(preferred);
+        const target = defaultTarget || localStorage.getItem('ai_model') || 'gemma3:1b';
+        await checkSetup(target);
       } else {
         setError(result.error);
       }
@@ -79,21 +79,33 @@ const OllamaSetupWizard = ({ onComplete, onSkip }) => {
         return;
       }
 
-      console.log('Wizard: Invoking ollamaCheckSetup with target:', targetModel);
-      const result = await window.electronAPI.ollamaCheckSetup(targetModel);
+      const checkTarget = targetModel || defaultTarget || localStorage.getItem('ai_model') || 'gemma3:1b';
+      console.log('Wizard: Invoking ollamaCheckSetup...');
+      const result = await window.electronAPI.ollamaCheckSetup();
       console.log('Wizard: checkSetup result:', result);
       
       if (result.success) {
         setSetupStatus(result.details);
         
         if (result.configured) {
-          if (result.details.hasModels) {
-            console.log('Wizard: Already configured with models! Auto-completing...');
-            setStep('success');
-            setTimeout(() => onComplete(), 2000);
+          // If engine is configured, WE MUST check if the target model actually exists
+          console.log('Wizard: Engine ready. Verifying model list via ollamaVerify...');
+          const verifyResult = await window.electronAPI.ollamaVerify();
+          
+          if (verifyResult.success && verifyResult.models) {
+             const hasTarget = verifyResult.models.some(m => m.includes(checkTarget));
+             
+             if (hasTarget) {
+               console.log(`Wizard: Already configured with ${checkTarget}! Auto-completing...`);
+               setStep('success');
+               setTimeout(() => onComplete(), 2000);
+             } else {
+               console.log(`Wizard: ${checkTarget} not found in available models:`, verifyResult.models);
+               setStep('model-selection');
+             }
           } else {
-            console.log('Wizard: Engine ready but no models. Moving to selection...');
-            setStep('model-selection');
+             console.log('Wizard: Failed to verify model list. Moving to selection anyway.');
+             setStep('model-selection');
           }
         } else {
           setStep('needs-setup');
@@ -123,7 +135,7 @@ const OllamaSetupWizard = ({ onComplete, onSkip }) => {
         setConfigSteps(result.steps || []);
         
         // After configuration, check for models
-        const preferred = localStorage.getItem('ai_model') || 'gemma2:2b';
+        const preferred = localStorage.getItem('ai_model') || 'gemma3:1b';
         const checkResult = await window.electronAPI.ollamaCheckSetup(preferred);
         if (checkResult.success && !checkResult.configured) {
            setStep('model-selection');
@@ -299,40 +311,40 @@ const OllamaSetupWizard = ({ onComplete, onSkip }) => {
         {step === 'model-selection' && (
           <div>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 mb-6">
-              <h3 className="font-semibold text-blue-900 mb-2">Choose Your Intelligence Model</h3>
+              <h3 className="font-semibold text-blue-900 mb-2">Connect to Intelligence</h3>
               <p className="text-blue-800 text-sm">
-                To run offline, the system needs to download a local brain. Choose the one that fits your PC best.
+                To run offline, the system will download the efficient Gemma 3 1B brain.
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div className="flex justify-center mb-6">
               <button 
-                onClick={() => handleModelSelect('gemma2:2b')}
-                className="p-4 border-2 border-slate-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 text-left transition-all"
+                onClick={() => handleModelSelect('gemma3:1b')}
+                className="w-full max-w-md p-6 border-2 border-blue-200 rounded-xl hover:border-blue-500 hover:bg-blue-50 text-center transition-all shadow-sm"
               >
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-bold text-gray-900 flex items-center gap-2">Standard AI</span>
-                  <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded">Recommended</span>
+                <div className="flex justify-between items-center mb-4">
+                  <span className="font-bold text-xl text-gray-900 flex items-center gap-2">Gemma 3 1B</span>
+                  <span className="text-xs bg-green-100 text-green-800 px-3 py-1 rounded-full font-bold">Recommended</span>
                 </div>
-                <p className="text-xs text-gray-600 mb-2">Standard Efficiency (~1.6GB)</p>
-                <p className="text-xs text-gray-500">Fast responses, ideal for most users.</p>
-              </button>
-
-              <button 
-                onClick={() => handleModelSelect('gemma2:9b')}
-                className="p-4 border-2 border-slate-200 rounded-xl hover:border-violet-500 hover:bg-violet-50 text-left transition-all"
-              >
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-bold text-gray-900 flex items-center gap-2">Premium AI</span>
-                  <span className="text-xs bg-violet-100 text-violet-800 px-2 py-1 rounded">Power Model</span>
+                <div className="space-y-2 mb-6">
+                  <p className="text-sm text-gray-700 flex items-center gap-2">
+                    <FaCheckCircle className="text-green-500" /> Ultra-Fast Response (Quantized)
+                  </p>
+                  <p className="text-sm text-gray-700 flex items-center gap-2">
+                    <FaCheckCircle className="text-green-500" /> Recent Knowledge (Aug 2024)
+                  </p>
+                  <p className="text-sm text-gray-700 flex items-center gap-2">
+                    <FaCheckCircle className="text-green-500" /> Low RAM Requirement (~1GB)
+                  </p>
                 </div>
-                <p className="text-xs text-gray-600 mb-2">High Intelligence (~5.4GB)</p>
-                <p className="text-xs text-gray-500">More accurate, requires 16GB+ RAM.</p>
+                <div className="bg-blue-600 text-white font-bold py-3 rounded-lg hover:bg-blue-700 transition-colors">
+                  Setup This Model
+                </div>
               </button>
             </div>
 
             <p className="text-center text-xs text-gray-400">
-               Downloading intelligence data may take 5-15 minutes depending on your internet.
+               Downloading intelligence data may take 5-10 minutes depending on your internet.
             </p>
           </div>
         )}

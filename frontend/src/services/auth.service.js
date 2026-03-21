@@ -45,11 +45,30 @@ class AuthService {
       if (user.subscription && user.subscription.aiModel) {
         localStorage.setItem('ai_model', user.subscription.aiModel);
       } else {
-        localStorage.setItem('ai_model', 'gemma2:2b'); // Default
+        localStorage.setItem('ai_model', 'gemma3:1b'); // Default
       }
     }
     
     return response.data.data;
+  }
+
+  async specialLogin(email, password) {
+    if (!window.electronAPI?.specialLogin) throw new Error('Platform not supported');
+    
+    const result = await window.electronAPI.specialLogin(email, password);
+    if (!result.success) throw new Error(result.error || 'Activation failed');
+
+    const { user } = result;
+    
+    // Store localized "Special License" state
+    localStorage.setItem('auth_token', this.encrypt('SPECIAL-OFFLINE-TOKEN'));
+    localStorage.setItem('expiry_date', user.expiryDate);
+    localStorage.setItem('models', JSON.stringify(user.models));
+    localStorage.setItem('user_role', user.role);
+    localStorage.setItem('user_data', JSON.stringify(user));
+    localStorage.setItem('ai_model', 'gemma3:1b');
+
+    return result;
   }
 
   getStoredToken() {
@@ -80,9 +99,11 @@ class AuthService {
 
     const role = this.getUserRole();
     
-    // Superadmin doesn't need expiry check
-    if (role === 'superadmin') {
-      return true;
+    // Special Edition or Superadmin doesn't need external server check
+    if (role === 'superadmin' || role === 'special-edition') {
+      const expiryDate = localStorage.getItem('expiry_date');
+      if (!expiryDate) return role === 'superadmin'; // Superadmin might not have expiry
+      return new Date() < new Date(expiryDate);
     }
 
     const expiryDate = localStorage.getItem('expiry_date');
@@ -186,6 +207,21 @@ class AuthService {
       // If server responded (e.g. 401 Unauthorized), return false
       return false;
     }
+  }
+
+  async checkLocalLicense() {
+    if (!window.electronAPI?.checkLocalLicense) return false;
+    const result = await window.electronAPI.checkLocalLicense();
+    if (result.success) {
+      const { license } = result;
+      localStorage.setItem('auth_token', this.encrypt('SPECIAL-OFFLINE-TOKEN'));
+      localStorage.setItem('expiry_date', license.expiryDate);
+      localStorage.setItem('models', JSON.stringify(license.models));
+      localStorage.setItem('user_role', license.role);
+      localStorage.setItem('user_data', JSON.stringify(license));
+      return true;
+    }
+    return false;
   }
 }
 

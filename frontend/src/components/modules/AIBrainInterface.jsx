@@ -2,9 +2,15 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useModule } from '../../context/ModuleContext';
 import KnowledgeBasePanel from './KnowledgeBasePanel';
 import { FaBrain, FaBook, FaRobot } from 'react-icons/fa';
+import api from '../../services/api.service';
 
-const AIBrainInterface = () => {
-    const { processQuestion, activeModuleInstance } = useModule();
+const AIBrainInterface = ({ activeTabId }) => {
+    const { activeModule, getModuleInstance, processQuestion } = useModule();
+    
+    // Use activeTabId for configuration context, fallback to activeModule
+    const effectiveModuleId = activeTabId || activeModule;
+    const activeModuleInstance = getModuleInstance(effectiveModuleId);
+
     const [question, setQuestion] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState('');
@@ -27,10 +33,9 @@ const AIBrainInterface = () => {
     useEffect(() => {
         const fetchHistory = async () => {
             try {
-                const response = await fetch('http://localhost:3000/api/chat-history');
-                if (response.ok) {
-                    const data = await response.json();
-                    setHistory(data);
+                const response = await api.get('/chat-history');
+                if (response.data) {
+                    setHistory(response.data.data || response.data);
                 }
             } catch (err) {
                 console.error('Failed to fetch chat history:', err);
@@ -52,6 +57,9 @@ const AIBrainInterface = () => {
             });
             return () => removeListener();
         }
+
+        // Note: External responses are handled in ClientDashboard.jsx for video triggering.
+        // We no longer add them to the UI history here to respect privacy/separation.
     }, []);
 
     const handleContextUpdate = (contextText) => {
@@ -93,21 +101,13 @@ const AIBrainInterface = () => {
 
                 // Sync BOTH messages to server for history persistence & broadcast
                 // 1. User Message
-                await fetch('http://localhost:3000/api/chat-history', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(userMsg)
-                });
+                await api.post('/chat-history', userMsg);
 
                 // 2. AI Message
                 const aiMsg = { type: 'ai', content: aiAnswer, sender: 'system', timestamp: Date.now() };
                 setHistory(prev => [...prev, aiMsg]);
 
-                await fetch('http://localhost:3000/api/chat-history', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(aiMsg)
-                });
+                await api.post('/chat-history', aiMsg);
 
                 // Step 3: Sync local history with the Module's sliding window if available
                 // This ensures UI matches the true brain state
@@ -145,9 +145,12 @@ const AIBrainInterface = () => {
             <div className="bg-gradient-to-r from-violet-900 to-indigo-900 px-6 py-4 border-b border-white/10 flex justify-between items-center">
                 <div>
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                        <FaBrain className="text-2xl" /> AI Chat
+                        {effectiveModuleId === 'gemini' ? <FaRobot className="text-2xl" /> : <FaBrain className="text-2xl" />} 
+                        {effectiveModuleId === 'gemini' ? 'Cloud AI Chat' : 'Offline AI Chat'}
                     </h2>
-                    <p className="text-indigo-200 text-xs mt-1">Local Intelligence Module</p>
+                    <p className="text-indigo-200 text-xs mt-1">
+                        {effectiveModuleId === 'gemini' ? 'Online Intelligence' : 'Local LLM Module'}
+                    </p>
                 </div>
                 <div className="flex items-center gap-4">
                     <button 

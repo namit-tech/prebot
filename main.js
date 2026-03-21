@@ -4,18 +4,35 @@ const fs = require('fs');
 const ollamaSetup = require('./ollama-setup');
 const whisperSetup = require('./whisper-setup');
 const { startEmbeddedBackend, stopEmbeddedBackend } = require('./embedded-backend');
+const SecurityManager = require('./security-manager');
+const OllamaBridgeManager = require('./ollama-bridge-manager');
 
 // Keep a global reference of the window object
 let mainWindow;
 let desktopServer = null;
 let pc2Server = null;
+let securityManager = null;
+let ollamaBridge = null;
+
+// Special Edition Detection
+const specialConfigPath = path.join(__dirname, 'special-config.json');
+const isSpecialEditionBuild = fs.existsSync(specialConfigPath);
+let specialConfig = {};
+if (isSpecialEditionBuild) {
+    try {
+        specialConfig = JSON.parse(fs.readFileSync(specialConfigPath, 'utf8'));
+        console.log('🛡️ [Main] Special Edition Detected (Army Build)');
+    } catch (e) {
+        console.error('❌ Failed to parse special-config.json');
+    }
+}
 
 // Show startup message in console
 console.log('\n');
 console.log('========================================');
 console.log('🤖 Offline AI Assistant - Starting...');
 console.log('========================================');
-console.log('📦 Version: 1.0.12');
+console.log('📦 Version: 1.0.13');
 console.log('🖥️  Platform:', process.platform);
 console.log('📁 App Path:', __dirname);
 console.log('========================================');
@@ -240,6 +257,7 @@ function createWindow() {
       titleBarStyle: 'default',
       autoHideMenuBar: true
     });
+    global.mainWindow = mainWindow;
 
     // Check if index.html exists
     const indexPath = path.join(__dirname, 'index.html');
@@ -254,15 +272,24 @@ function createWindow() {
     
     console.log('✅ index.html found, loading...');
 
-    // Load the app using absolute path to prevent CWD issues
-    mainWindow.loadFile(indexPath).then(() => {
-      console.log('✅ index.html loaded successfully');
-    }).catch((error) => {
-      const errorMsg = `\n\n========================================\n❌ ERROR LOADING index.html\n========================================\n${error.message}\n\nStack Trace:\n${error.stack}\n========================================\n\n`;
-      console.error(errorMsg);
-      process.stderr.write(errorMsg);
-      dialog.showErrorBox('Load Error', `Failed to load application: ${error.message}\n\nCheck the command prompt for full error details.`);
-    });
+    // Load the app
+    if (!app.isPackaged && process.argv.includes('--dev-server')) {
+      // ONLY load from URL if user explicitly asks for dev-server mode
+      mainWindow.loadURL('http://localhost:5173').then(() => {
+        console.log('✅ Connected to Vite dev server (port 5173)');
+      }).catch(() => {
+        console.warn('⚠️ Vite dev server not found on 5173, falling back to local index.html');
+        mainWindow.loadFile(indexPath);
+      });
+    } else {
+      // Default: Load the local index.html (works for both production and manual local testing)
+      mainWindow.loadFile(indexPath).then(() => {
+        console.log('✅ index.html loaded successfully');
+      }).catch((error) => {
+        console.error('❌ Error loading index.html:', error);
+        dialog.showErrorBox('Load Error', `Failed to load application: ${error.message}`);
+      });
+    }
 
     // Show window when ready to prevent visual flash
     mainWindow.once('ready-to-show', () => {
@@ -290,6 +317,24 @@ function createWindow() {
     mainWindow.webContents.setWindowOpenHandler(({ url }) => {
       shell.openExternal(url);
       return { action: 'deny' };
+    });
+
+    // CRITICAL: Block navigation to root drive (Fixes ERR_FILE_NOT_FOUND: file:///C:/)
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+      if (url === 'file:///' || url === 'file:///C:/') {
+        console.warn('⛔ [Main] Blocked invalid navigation to root drive:', url);
+        event.preventDefault();
+      } else {
+        console.log('🔗 [Main] Window navigating to:', url);
+      }
+    });
+
+    mainWindow.webContents.on('will-frame-navigate', (event) => {
+       const url = event.url;
+       if (url === 'file:///' || url === 'file:///C:/') {
+         console.warn('⛔ [Main] Blocked invalid frame navigation to root drive:', url);
+         event.preventDefault();
+       }
     });
 
     // Enable developer tools for debugging (only in development)
@@ -338,6 +383,133 @@ function createWindow() {
     }, 10000);
   }
 }
+
+
+// Initialize Security and Bridge
+app.whenReady().then(async () => {
+    const userDataPath = app.getPath('userData');
+    securityManager = new SecurityManager(userDataPath, specialConfig);
+    
+    // ONLY Start the internal Ollama bridge automatically in Special Edition
+    // Fallback: Also start if in development/unpacked mode to help debugging
+    const shouldStartBridge = (isSpecialEditionBuild && specialConfig.autoStartBridge) || !app.isPackaged;
+    
+    if (shouldStartBridge) {
+        try {
+            // SIMPLE & STRAIGHT: Forcefully clear port 11434 specifically
+            console.log('🛡️ [Main] Initializing specialized bridge territory...');
+            try {
+                const { execSync } = require('child_process');
+                console.log('[Main] Clearing port 11434 (Universal Kill)...');
+                // We MUST kill the GUI app too, otherwise it will just restart the engine 0.1s later
+                execSync('taskkill /F /IM ollama.exe /T', { stdio: 'ignore' });
+                execSync('taskkill /F /IM "ollama app.exe" /T', { stdio: 'ignore' });
+                execSync('taskkill /F /IM "Ollama.exe" /T', { stdio: 'ignore' });
+            } catch (e) { /* ignore if not running */ }
+
+            // Increased OS cooldown to be extra safe
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Re-spawn headless engine on 11436
+            await ollamaSetup.restartOllama();
+            
+            ollamaBridge = new OllamaBridgeManager({ 
+                port: 11434, // standard port
+                targetPort: 11436, // engine port
+                prebotUrl: 'http://localhost:5000/api/bridge-response' 
+            });
+
+            // Wire up bridge events to UI using the reliable singleton mainWindow
+            ollamaBridge.on('thinking', () => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('external-ai-thinking');
+                    console.log('[Main] 🧠 Bridge Thinking -> UI via mainWindow');
+                } else {
+                    console.warn('[Main] ⚠️ Thinking detected but mainWindow not available');
+                }
+            });
+
+            ollamaBridge.on('response', (data) => {
+                if (mainWindow && !mainWindow.isDestroyed()) {
+                    mainWindow.webContents.send('external-ai-response', data);
+                    console.log('[Main] ✅ Bridge Response -> UI via mainWindow');
+                } else {
+                    console.warn('[Main] ⚠️ Response captured but mainWindow not available');
+                }
+            });
+
+            // Local bridge diagnostic listener to verify emission
+            ollamaBridge.on('thinking', () => console.log('[Main] Bridge Thinking event absorbed'));
+            ollamaBridge.on('response', (data) => console.log('[Main] Bridge Response event absorbed (size:', data?.answer?.length, ')'));
+
+            await ollamaBridge.start();
+            console.log(`[Main] Internal Ollama Bridge started (${app.isPackaged ? 'Special Edition' : 'Developer Mode'}).`);
+            console.log('🛡️ [Main] Bridge listening on default port 11434.');
+        } catch (bridgeError) {
+            console.error('[Main] Bridge startup error:', bridgeError.message);
+        }
+    }
+});
+
+// IPC: Special Edition Detection
+ipcMain.handle('is-special-edition', () => {
+    return isSpecialEditionBuild || !app.isPackaged;
+});
+
+// IPC: Special Edition Login
+ipcMain.handle('special-login', async (event, { email, password }) => {
+    try {
+        console.log(`[Security] Special login attempt for: ${email}`);
+        
+        if (securityManager.isSpecialUser(email, password)) {
+            // Success! Generate a local license (valid for 1 year by default)
+            const expiry = new Date();
+            expiry.setFullYear(expiry.getFullYear() + 1);
+            
+            securityManager.saveSpecialLicense(expiry.toISOString());
+            
+            return { 
+                success: true, 
+                user: {
+                    email: email,
+                    role: 'special-edition',
+                    expiryDate: expiry.toISOString(),
+                    models: ['gemma', 'gemini', 'predefined'] // Unlock all
+                }
+            };
+        }
+        
+        return { success: false, error: 'Invalid special credentials' };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+
+// IPC: Check Local License (Offline Mode)
+ipcMain.handle('check-local-license', async () => {
+    const license = securityManager.getSpecialLicense();
+    if (!license || license.error) return { success: false, error: license?.error || 'No license' };
+    
+    const isExpired = new Date() > new Date(license.expiryDate);
+    if (isExpired) return { success: false, error: 'LICENSE_EXPIRED' };
+    
+    return { 
+        success: true, 
+        license: {
+            email: 'offline-user@prebot.ai',
+            role: 'special-edition',
+            expiryDate: license.expiryDate,
+            models: ['gemma', 'gemini', 'predefined']
+        }
+    };
+});
+
+// IPC: Get Machine ID for key generation
+ipcMain.handle('get-machine-id', async () => {
+    console.log('📡 [IPC] get-machine-id');
+    return securityManager.getMachineID();
+});
 
 // IPC handlers for server control
 ipcMain.handle('start-server', async () => {
@@ -468,27 +640,6 @@ whisperHandler.on('error', (error) => {
   }
 });
 
-// Machine ID Handler (Soft Lock)
-ipcMain.handle('get-machine-id', () => {
-  try {
-    const hostname = os.hostname();
-    const username = os.userInfo().username;
-    const cpus = os.cpus();
-    const cpuModel = cpus.length > 0 ? cpus[0].model : 'unknown-cpu';
-    const platform = os.platform();
-    const arch = os.arch();
-
-    const fingerprint = `${hostname}-${username}-${cpuModel}-${platform}-${arch}`;
-    const hash = crypto.createHash('sha256').update(fingerprint).digest('hex');
-    
-    console.log('[Main] Generated Machine ID:', hash);
-    return hash;
-  } catch (error) {
-    console.error('[Main] Error generating machine ID:', error);
-    return 'fallback-machine-id-' + Date.now();
-  }
-});
- 
 // IPC: Get System Specifications for Performance Monitoring
 ipcMain.handle('get-system-specs', async () => {
     try {
@@ -709,19 +860,11 @@ app.whenReady().then(async () => {
         console.error('❌ Failed to start embedded backend:', err);
     }
 
-    // Auto-start Ollama Service
-    console.log('🚀 Auto-starting Ollama service...');
-    // We don't await this because we want the app to open immediately
-    ollamaSetup.restartOllama((msg) => {
-        console.log(`[OllamaAutoStart] ${msg}`);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('ollama-log', msg);
-        }
-    }).then(() => {
-        console.log('✅ Ollama auto-start initiated');
-    }).catch(err => {
-        console.error('❌ Failed to auto-start Ollama:', err);
-    });
+    // [CLEANUP] Redundant auto-start removed. 
+    // Ollama is now handled in the Bridge-Sync block above to ensure correct port release.
+    if (!isSpecialEditionBuild && !process.argv.includes('--bridge')) {
+        console.log('ℹ️ Standard edition detected - skipping Ollama auto-start');
+    }
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
@@ -820,12 +963,15 @@ function createMenu() {
 
 // IPC handlers for communication with renderer process
 ipcMain.handle('get-app-version', () => {
+  console.log('📡 [IPC] get-app-version');
   return app.getVersion();
 });
 
 ipcMain.handle('get-app-path', () => {
+  console.log('📡 [IPC] get-app-path');
   return app.getAppPath();
 });
+
 
 // Save questions to file for server access
 ipcMain.handle('save-questions', async (event, questions) => {
@@ -1052,10 +1198,19 @@ app.on('web-contents-created', (event, contents) => {
   });
   
   contents.on('will-navigate', (event, navigationUrl) => {
+    // Block root drive navigation
+    if (navigationUrl === 'file:///' || navigationUrl === 'file:///C:/' || navigationUrl === 'file:///C:/' || navigationUrl.endsWith(':/') || navigationUrl.endsWith(':/')) {
+      console.warn('⛔ [Main:Security] Blocked invalid navigation to root drive:', navigationUrl);
+      event.preventDefault();
+      return;
+    }
+
     const parsedUrl = new URL(navigationUrl);
     if (parsedUrl.protocol !== 'file:') {
       event.preventDefault();
       shell.openExternal(navigationUrl);
+    } else {
+      console.log('🔗 [Main:Security] Internal navigation allowed:', navigationUrl);
     }
   });
 });
@@ -1230,6 +1385,47 @@ ipcMain.handle('ollama:verify', async (event) => {
   const result = await ollamaSetup.verifyOllamaConnection(logger);
   console.log('[Main:IPC] ollama:verify result:', JSON.stringify(result));
   return result;
+});
+
+// IPC: Get Ollama Logs
+ipcMain.handle('get-ollama-logs', async () => {
+    try {
+        const logPath = path.join(getDataDirectory().dataDir, 'ollama-service.log');
+        if (fs.existsSync(logPath)) {
+            const content = fs.readFileSync(logPath, 'utf8');
+            // Return last 2000 characters
+            return content.slice(-2000);
+        }
+        return "Log file not found.";
+    } catch (error) {
+        return `Error reading logs: ${error.message}`;
+    }
+});
+
+// IPC: Check Bridge Status
+ipcMain.handle('check-bridge-status', async () => {
+    const http = require('http');
+    
+    return new Promise((resolve) => {
+        const req = http.get('http://127.0.0.1:11434/api/tags', (res) => {
+            resolve({ 
+                running: true, 
+                status: res.statusCode,
+                msg: "Bridge is responding"
+            });
+        });
+        req.on('error', (err) => {
+            resolve({ 
+                running: false, 
+                error: err.message,
+                msg: "Bridge not responding"
+            });
+        });
+        req.setTimeout(2000, () => {
+            req.destroy();
+            resolve({ running: false, error: 'Timeout', msg: "Bridge timeout" });
+        });
+    });
 });
 
 ipcMain.handle('ollama:install-model', async (event, modelName) => {

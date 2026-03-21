@@ -2,13 +2,30 @@ import axios from 'axios';
 import authService from './auth.service';
 
 const API_URL = import.meta.env.VITE_API_URL || 'https://adminapi.elloindia.in/api';
+const LOCAL_BACKEND_URL = 'http://localhost:5000/api';
+
+// For Special Edition, we force port 5000 immediately to stay offline
+// and prevent race conditions with async IPC calls
+// detect if we are running in Electron even if preload hasn't finished
+const isProbablyElectron = typeof window !== 'undefined' && 
+  (window.electronAPI || navigator.userAgent.toLowerCase().includes(' electron/'));
 
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: isProbablyElectron ? LOCAL_BACKEND_URL : API_URL,
   headers: {
     'Content-Type': 'application/json'
   }
 });
+
+// Hard-force local API if Special Edition
+if (window.electronAPI?.isSpecialEdition) {
+  window.electronAPI.isSpecialEdition().then(isSpecial => {
+    if (isSpecial) {
+      console.log('🛡️ [API] Special Edition Hardening: Forcing local API (localhost:5000)');
+      api.defaults.baseURL = LOCAL_BACKEND_URL;
+    }
+  });
+}
 
 // Request interceptor (add token)
 api.interceptors.request.use((config) => {
@@ -39,14 +56,13 @@ api.interceptors.response.use(
         errorMessage.includes('invalid token') ||
         errorMessage.includes('token expired')
       ) {
-        // This is a real auth error - logout
+        // Only logout on actual authentication/authorization errors
         authService.logout();
-        // Only redirect if not already on login page
-        setTimeout(() => {
-          if (!window.location.pathname.includes('login') && window.location.pathname !== '/') {
-            window.location.href = '/';
-          }
-        }, 100);
+        
+        // In Electron with file:// protocol, we must NEVER redirect to '/' 
+        // as it resolves to 'file:///C:/' which causes a crash.
+        // AuthContext will handle state change to show Login component automatically.
+        console.warn('Authentication lost. Manual login required.');
       }
       // For other 401 errors, just reject without logout
     }

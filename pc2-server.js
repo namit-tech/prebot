@@ -52,7 +52,7 @@ class PC2Server {
         
         // Animation trigger endpoint
         expressApp.post('/api/animation-trigger', (req, res) => {
-            const { action } = req.body; // 'start' or 'stop'
+            const { action, video } = req.body; // 'start' or 'stop', plus optional video config
             
             console.log(`🎬 Animation trigger received: ${action} (immediate response)`);
             
@@ -61,7 +61,8 @@ class PC2Server {
             
             // Execute action immediately (synchronously)
             if (action === 'start') {
-                this.startAnimation();
+                // If a video payload was provided (e.g., from an external bridge), use it
+                this.startAnimation(video);
             } else if (action === 'stop') {
                 this.stopAnimation();
             }

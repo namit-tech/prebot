@@ -42,7 +42,7 @@ const MobileQuestionInterface = () => {
 
   const testConnection = async (ip) => {
     try {
-      const response = await fetch(`http://${ip}:3000/api/health`, {
+      const response = await fetch(`http://${ip}:5001/api/health`, {
         method: 'GET',
         timeout: 2000
       });
@@ -82,7 +82,7 @@ const MobileQuestionInterface = () => {
         // Send to PC to trigger video
         if (connected && pcIP) {
           try {
-            await fetch(`http://${pcIP}:3000/api/trigger-video`, {
+            await fetch(`http://${pcIP}:5001/api/trigger-video`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({

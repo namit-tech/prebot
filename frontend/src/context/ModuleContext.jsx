@@ -91,6 +91,21 @@ export const ModuleProvider = ({ children }) => {
     }
   }, [activeModule]);
 
+  // No longer needed as we have separate modules in the selector
+  useEffect(() => {
+    const handleStorageChange = () => {
+      // Logic for handling external changes if needed
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    const interval = setInterval(handleStorageChange, 1000);
+    
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(interval);
+    };
+  }, [activeModule]);
+
   return (
     <ModuleContext.Provider value={{
       availableModules,

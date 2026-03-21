@@ -1,0 +1,7 @@
+{
+  "autoStartBridge": true,
+  "defaultAuth": {
+    "email": "offline-user@prebot.ai",
+    "password": "army-mode-enabled"
+  }
+}

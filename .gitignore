@@ -17,6 +17,11 @@ build/
 backend/dist/
 frontend/dist/
 electron/dist-electron/
+dist_build_special/
+dist_build_temp/
+frontend/public/downloads/*.exe
+frontend/public/downloads/*.apk
+frontend/public/downloads/latest-version.json
 
 # Logs
 logs/

@@ -44,7 +44,7 @@ async function startEmbeddedBackend() {
                 id: 'offline-user-id',
                 email: email || 'offline@prebot.local',
                 name: 'Offline User',
-                role: 'superadmin',
+                role: 'special-edition',
                 companyName: 'PreBot Offline'
             }
         }
@@ -59,7 +59,7 @@ async function startEmbeddedBackend() {
             user: {
                 _id: 'offline-user-id',
                 email: 'offline@prebot.local',
-                role: 'superadmin',
+                role: 'special-edition',
                 companyName: 'PreBot Offline'
             },
             subscription: {
@@ -90,6 +90,28 @@ async function startEmbeddedBackend() {
         valid: true,
         modules: ['predefined', 'gemma', 'gemini']
       });
+    });
+    
+    // Mock chat history storage
+    let chatHistory = [];
+    
+    // Mock chat history endpoint
+    app.get('/api/chat-history', (req, res) => {
+      res.json({ success: true, data: chatHistory });
+    });
+    
+    app.post('/api/chat-history', (req, res) => {
+      const message = req.body;
+      chatHistory.push({
+        ...message,
+        id: Date.now() + Math.random(),
+        timestamp: message.timestamp || Date.now()
+      });
+      
+      // Keep only last 100 messages to prevent memory leak
+      if (chatHistory.length > 100) chatHistory = chatHistory.slice(-100);
+      
+      res.json({ success: true });
     });
     
     // Start server on dynamic port (5000 or next available)

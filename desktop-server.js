@@ -9,8 +9,8 @@ let questionsData = [];
 class DesktopServer {
     constructor(dataDir = null) {
         this.server = null;
-        this.port = 3000;
-        this.questions = questionsData || []; // Initialize with loaded questions
+        this.port = 5001;
+        this.questions = questionsData || [];
         this.pendingQuestion = null;
         this.pendingRequests = new Map(); // Store pending AI requests
         this.dataDir = dataDir || __dirname; // Use provided data directory or fallback to __dirname

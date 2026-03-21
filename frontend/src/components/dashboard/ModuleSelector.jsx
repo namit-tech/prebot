@@ -11,13 +11,30 @@ import { FaClipboardList, FaBrain, FaRobot, FaInfoCircle } from 'react-icons/fa'
 
 const ModuleSelector = () => {
   const { availableModules, activeModule, loadModule, loading, error, clearError } = useModule();
+  const [selectedTab, setSelectedTab] = useState(activeModule || (availableModules.length > 0 ? availableModules[0].id : 'predefined'));
   const [showConfig, setShowConfig] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showOllamaSetup, setShowOllamaSetup] = useState(false);
   const [showWhisperSetup, setShowWhisperSetup] = useState(false);
   const [infoModal, setInfoModal] = useState(null); // 'predefined' or 'gemma'
-  const [setupModel, setSetupModel] = useState(localStorage.getItem('ai_model') || 'gemma2:2b');
+  const [setupModel, setSetupModel] = useState(localStorage.getItem('ai_model') || 'gemma3:1b');
+
+  // Sync selectedTab with activeModule when it changes successfully
+  useEffect(() => {
+    if (activeModule) {
+      setSelectedTab(activeModule);
+    }
+  }, [activeModule]);
+
+  // Handle initial activeModule if availableModules data arrives later
+  useEffect(() => {
+    if (activeModule && !selectedTab) {
+      setSelectedTab(activeModule);
+    } else if (!activeModule && availableModules.length > 0 && !selectedTab) {
+      setSelectedTab(availableModules[0].id);
+    }
+  }, [availableModules, activeModule]);
 
   useEffect(() => {
     // Check Whisper model on component mount
@@ -31,16 +48,22 @@ const ModuleSelector = () => {
   }, []);
 
   const handleModuleSelect = async (moduleId) => {
+    setSelectedTab(moduleId);
     const result = await loadModule(moduleId);
     if (!result.success) {
       if (result.code === 'REQUIRES_SETUP' && result.suggestWizard) {
         // Use the new automated AI setup wizard
         setShowOllamaSetup(true);
       } else if (result.code === 'REQUIRES_SETUP') {
-        // Old setup wizard (legacy manual setup)
-        const preferred = localStorage.getItem('ai_model') || 'gemma2:2b';
-        setSetupModel(preferred);
-        setShowSetup(true);
+        // For Gemini, we don't show the offline wizard, we show the config
+        if (moduleId === 'gemini') {
+          setShowConfig(true);
+        } else {
+          // Old setup wizard (legacy manual setup)
+          const preferred = localStorage.getItem('ai_model') || 'gemma3:1b';
+          setSetupModel(preferred);
+          setShowSetup(true);
+        }
       } else {
         alert(result.error || 'Failed to load module');
       }
@@ -66,7 +89,7 @@ const ModuleSelector = () => {
   const moduleIcons = {
     predefined: <FaClipboardList />,
     gemma: <FaBrain />,
-    gemini: <FaBrain /> // Backward compatibility
+    gemini: <FaRobot />
   };
 
   return (
@@ -89,36 +112,35 @@ const ModuleSelector = () => {
           </div>
         ) : (
           <div>
-            {/* Multi-Model Switcher (Tabbed Interface) */}
             {availableModules.length > 1 && (
               <div className="flex p-1 bg-gray-100 rounded-xl mb-6 border border-gray-200">
-                {availableModules.filter(m => m.id !== 'predefined' || availableModules.some(am => am.id === 'predefined')).map((module) => (
-                  <div key={module.id} className="flex-1 relative group">
-                    <button
-                      onClick={() => handleModuleSelect(module.id)}
-                      className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-semibold transition-all duration-200 ${
-                        activeModule === module.id
-                          ? 'bg-white text-blue-600 shadow-sm ring-1 ring-gray-200'
-                          : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
-                      }`}
-                    >
-                      <span className="text-xl">{moduleIcons[module.id] || <FaRobot />}</span>
-                      {module.id === 'gemma' || module.id === 'gemini' ? 'AI Brain' : module.name}
-                      {activeModule === module.id && (
-                        <span className="ml-2 w-2 h-2 rounded-full bg-blue-500"></span>
-                      )}
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setInfoModal(module.id === 'predefined' ? 'predefined' : 'gemma');
-                      }}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 p-1.5 rounded-full transition-colors z-10"
-                      title="Learn more about this module"
-                    >
-                      <FaInfoCircle className="text-base" />
-                    </button>
-                  </div>
+                {availableModules.map((module) => (
+                   <div key={module.id} className="flex-1 relative group">
+                     <button
+                       onClick={() => handleModuleSelect(module.id)}
+                       className={`w-full flex items-center justify-center gap-2 py-3 px-4 rounded-lg text-sm font-semibold transition-all duration-200 ${
+                         selectedTab === module.id
+                           ? 'bg-white text-blue-600 shadow-sm ring-1 ring-gray-200'
+                           : 'text-gray-500 hover:text-gray-700 hover:bg-gray-200/50'
+                       }`}
+                     >
+                       <span className="text-xl">{moduleIcons[module.id] || <FaRobot />}</span>
+                       {module.name}
+                       {activeModule === module.id && (
+                         <span className="ml-2 w-2 h-2 rounded-full bg-blue-500" title="Currently Active"></span>
+                       )}
+                     </button>
+                     <button
+                       onClick={(e) => {
+                         e.stopPropagation();
+                         setInfoModal(module.id === 'predefined' ? 'predefined' : 'gemma');
+                       }}
+                       className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 p-1.5 rounded-full transition-colors z-10"
+                       title="Learn more about this module"
+                     >
+                       <FaInfoCircle className="text-base" />
+                     </button>
+                   </div>
                 ))}
               </div>
             )}
@@ -129,10 +151,12 @@ const ModuleSelector = () => {
                 onClick={() => handleModuleSelect(availableModules[0].id)}
                 className="p-6 border-2 border-primary-500 bg-primary-50 rounded-lg cursor-pointer flex items-center gap-4"
               >
-                <div className="text-4xl text-primary-600">{moduleIcons[availableModules[0].id] || <FaRobot />}</div>
+                <div className="text-4xl text-primary-600">
+                  {moduleIcons[availableModules[0].id] || <FaRobot />}
+                </div>
                 <div>
                    <h3 className="text-lg font-semibold text-gray-900">
-                     {availableModules[0].id === 'gemma' ? 'AI Brain' : availableModules[0].name}
+                     {availableModules[0].name}
                    </h3>
                    <p className="text-sm text-gray-600">Click to activate</p>
                 </div>
@@ -170,17 +194,20 @@ const ModuleSelector = () => {
             )}
           </div>
 
-          {showConfig && (activeModule === 'gemma' || activeModule === 'gemini') && (
+          {showConfig && (selectedTab === 'gemma' || selectedTab === 'gemini') && (
             <div className="mb-6">
-              <GemmaConfig onRequestSetup={() => setShowOllamaSetup(true)} />
+              <GemmaConfig 
+                onRequestSetup={() => setShowOllamaSetup(true)} 
+                activeTabId={selectedTab}
+              />
             </div>
           )}
-          {showAdmin && activeModule === 'predefined' && <PredefinedAdmin />}
+          {showAdmin && selectedTab === 'predefined' && <PredefinedAdmin />}
 
-          {activeModule === 'predefined' ? (
+          {selectedTab === 'predefined' ? (
             <PredefinedInterface />
           ) : (
-            <AIBrainInterface />
+            <AIBrainInterface activeTabId={selectedTab} />
           )}
         </>
       )}
@@ -196,6 +223,7 @@ const ModuleSelector = () => {
       {/* AI Setup Wizard (Automated) */}
       {showOllamaSetup && (
         <OllamaSetupWizard
+          targetModel="gemma3:1b"
           onComplete={handleSetupComplete}
           onSkip={() => setShowOllamaSetup(false)}
         />

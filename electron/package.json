@@ -37,7 +37,9 @@
       {
         "from": "resources/installers",
         "to": "resources/installers",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -62,6 +64,11 @@
     }
   },
   "dependencies": {
+    "@langchain/community": "^0.0.51",
+    "@langchain/core": "^1.1.31",
+    "@xenova/transformers": "^2.17.2",
+    "faiss-node": "^0.5.1",
+    "langchain": "^0.1.36",
     "node-fetch": "^3.3.2"
   }
 }

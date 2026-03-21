@@ -5,10 +5,11 @@ import SubscriptionStatus from '../dashboard/SubscriptionStatus';
 import ModuleSelector from '../dashboard/ModuleSelector';
 import VideoManagement from './VideoManagement';
 import QAManagement from './QAManagement';
-import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib, FaHandPaper, FaSignOutAlt, FaMicrochip, FaSdCard, FaExclamationTriangle, FaCheckCircle, FaInfoCircle, FaServer, FaHeadset, FaPhoneAlt, FaEnvelope } from 'react-icons/fa';
 import AISystemInstructions from './AISystemInstructions';
 import VoiceSettings from './VoiceSettings';
 import { isElectron } from '../../utils/electron';
+import DownloadPortal from './DownloadPortal';
+import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib, FaHandPaper, FaSignOutAlt, FaMicrochip, FaSdCard, FaExclamationTriangle, FaCheckCircle, FaInfoCircle, FaServer, FaHeadset, FaPhoneAlt, FaEnvelope, FaDownload } from 'react-icons/fa';
 
 const ClientDashboard = () => {
   const { user, logout } = useAuth();
@@ -345,6 +346,29 @@ const ClientDashboard = () => {
         .replace(/\n\s*\n/g, '. ') // Replace double newlines with a period and space for natural pause
         .trim();
   };
+
+  useEffect(() => {
+    if (window.electronAPI && window.electronAPI.onExternalAIResponse) {
+        console.log('[Dashboard] ✅ Attached External AI Response Listener (Ollama Bridge)');
+        
+        const removeResponseListener = window.electronAPI.onExternalAIResponse((data) => {
+            console.log('[Dashboard] 🖥️ Bridge Response detected:', data.question.substring(0, 20));
+            handleDesktopActions(data.answer, 'voice');
+        });
+
+        const removeThinkingListener = window.electronAPI.onExternalAIThinking && 
+            window.electronAPI.onExternalAIThinking(() => {
+                console.log('[Dashboard] 🖥️ Bridge Thinking detected');
+                setIsAIBusy(true);
+                startThinkingVideo();
+            });
+
+        return () => {
+            removeResponseListener();
+            if (removeThinkingListener) removeThinkingListener();
+        };
+    }
+  }, []);
 
   const handleInteractionRequest = async (data) => {
     const { question, providedAnswer, answer, triggerVideo, inputType, requestId } = data;
@@ -1204,7 +1228,8 @@ const ClientDashboard = () => {
     { id: 'videos', name: 'Videos', icon: <FaVideo /> },
     { id: 'instructions', name: 'Instructions', icon: <FaPenNib />, show: isAIAuthorized && activeModule !== 'predefined' },
     { id: 'qa', name: 'Q&A', icon: <FaQuestionCircle />, show: showQATab },
-    { id: 'voice', name: 'Voice', icon: <FaVolumeUp /> }
+    { id: 'voice', name: 'Voice', icon: <FaVolumeUp /> },
+    { id: 'downloads', name: 'Downloads', icon: <FaDownload /> }
   ].filter(t => t.show !== false);
 
   const handleTabChange = async (tabId) => {
@@ -1403,6 +1428,7 @@ const ClientDashboard = () => {
         {activeTab === 'instructions' && <AISystemInstructions />}
         {activeTab === 'qa' && <QAManagement />}
         {activeTab === 'voice' && <VoiceSettings />}
+        {activeTab === 'downloads' && <DownloadPortal />}
       </main>
 
       {/* --- SYSTEM SPECS MODAL --- */}

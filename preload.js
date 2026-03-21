@@ -63,6 +63,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPrimaryVideo: (video) => ipcRenderer.invoke('set-primary-video', video),
   deleteVideo: (videoId) => ipcRenderer.invoke('delete-video', videoId),
   
+  // Special Edition (Standalone)
+  specialLogin: (email, password) => ipcRenderer.invoke('special-login', { email, password }),
+  checkLocalLicense: () => ipcRenderer.invoke('check-local-license'),
+  isSpecialEdition: () => ipcRenderer.invoke('is-special-edition'),
+  
   // WiFi Hotspot
   getHotspotStatus: () => ipcRenderer.invoke('get-hotspot-status'),
   startHotspot: (ssid, password) => ipcRenderer.invoke('start-hotspot', { ssid, password }),
@@ -145,6 +150,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ollamaVerify: () => ipcRenderer.invoke('ollama:verify'),
   ollamaInstallModel: (modelName) => ipcRenderer.invoke('ollama:install-model', modelName),
   ollamaInstall: () => ipcRenderer.invoke('ollama:install'),
+  getOllamaLogs: () => ipcRenderer.invoke('get-ollama-logs'),
+  checkBridgeStatus: () => ipcRenderer.invoke('check-bridge-status'),
   
   onOllamaProgress: (callback) => {
     const subscription = (event, data) => callback(data);
@@ -174,6 +181,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('whisper-setup-progress', subscription);
   },
 
+  onExternalAIResponse: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('external-ai-response', subscription);
+    return () => ipcRenderer.removeListener('external-ai-response', subscription);
+  },
+
+  onExternalAIThinking: (callback) => {
+    const subscription = (event) => callback();
+    ipcRenderer.on('external-ai-thinking', subscription);
+    return () => ipcRenderer.removeListener('external-ai-thinking', subscription);
+  },
+  
   // Platform detection
   platform: process.platform,
   // App info

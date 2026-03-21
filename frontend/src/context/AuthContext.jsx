@@ -19,7 +19,17 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const checkAuth = async () => {
       const token = authService.getStoredToken();
+      
+      // Try local license first for Standalone/Special builds
       if (!token) {
+        const hasLocalLicense = await authService.checkLocalLicense();
+        if (hasLocalLicense) {
+           setIsAuthenticated(true);
+           setUser(authService.getUserData());
+           setLoading(false);
+           return;
+        }
+        
         setIsAuthenticated(false);
         setUser(null);
         setLoading(false);
@@ -27,10 +37,13 @@ export const AuthProvider = ({ children }) => {
       }
 
       const role = authService.getUserRole();
-      // Superadmin doesn't need expiry check
-      if (role === 'superadmin') {
-        setIsAuthenticated(true);
-        setUser(authService.getUserData());
+      
+      // Superadmin or Special Edition doesn't need external validation
+      if (role === 'superadmin' || role === 'special-edition') {
+        console.log('🛡️ [AuthContext] Special Edition Detected: Skipping online validation');
+        const valid = authService.isTokenValid();
+        setIsAuthenticated(valid);
+        setUser(valid ? authService.getUserData() : null);
         setLoading(false);
         return;
       }
@@ -71,7 +84,7 @@ export const AuthProvider = ({ children }) => {
     // Check expiry/validity every minute (only for clients, not superadmin)
     const interval = setInterval(async () => {
       const role = authService.getUserRole();
-      if (role !== 'superadmin') {
+      if (role !== 'superadmin' && role !== 'special-edition') {
         // First check local validity (expiry)
         if (!authService.isTokenValid()) {
           setIsAuthenticated(false);
@@ -81,14 +94,12 @@ export const AuthProvider = ({ children }) => {
         }
 
         // Then check with server (for deleted users/revoked access)
-        // This also refreshes the data in localStorage
         const isValidServer = await authService.validateSession();
         if (!isValidServer) {
           setIsAuthenticated(false);
           authService.logout();
           setUser(null);
         } else {
-          // Update user state with potentially fresh data from localStorage
           setUser(authService.getUserData());
         }
       }
@@ -99,14 +110,24 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password, hardwareId) => {
     try {
-      const result = await authService.login(email, password, hardwareId);
-      setIsAuthenticated(true);
-      setUser(result.user || authService.getUserData());
-      return { success: true, data: result };
+      // 1. Try Normal Server Login
+      try {
+        const result = await authService.login(email, password, hardwareId);
+        setIsAuthenticated(true);
+        setUser(result.user || authService.getUserData());
+        return { success: true, data: result };
+      } catch (serverError) {
+        // 2. If server failed (offline or invalid), try Special Edition Activation
+        console.log('[AuthContext] Server login failed, trying Special Activation...', serverError.message);
+        const specialResult = await authService.specialLogin(email, password);
+        setIsAuthenticated(true);
+        setUser(specialResult.user);
+        return { success: true, data: specialResult };
+      }
     } catch (error) {
       return { 
         success: false, 
-        error: error.response?.data?.error || error.message 
+        error: error.message || 'Login failed'
       };
     }
   };

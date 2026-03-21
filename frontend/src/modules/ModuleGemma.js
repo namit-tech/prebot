@@ -2,11 +2,11 @@ import BaseModule from './BaseModule';
 import memoryService from '../services/memory.service';
 
 /**
- * Module 2: Gemma 2 9B AI
- * Uses Ollama with Gemma 2 9B model for AI responses
+ * Module 2: Gemma 3 1B AI
+ * Uses Ollama with Gemma 3 1B model for AI responses
  * 
  * ✅ WORKS OFFLINE - Uses local Ollama installation
- * Requires Ollama to be installed and Gemma 2 9B model downloaded
+ * Requires Ollama to be installed and Gemma 3 1B model downloaded
  */
 class ModuleGemma extends BaseModule {
   constructor() {
@@ -16,8 +16,8 @@ class ModuleGemma extends BaseModule {
       version: '1.0.0',
       requiresNetwork: false // Works offline
     });
-    this.ollamaUrl = 'http://localhost:11434';
-    this.modelName = 'gemma2:9b';
+    this.ollamaUrl = 'http://localhost:11434'; // Use the bridge for consistent triggers
+    this.modelName = 'gemma3:1b';
     this.isOllamaAvailable = false;
     this.chatHistory = []; // Short-term sliding window
     this.MAX_HISTORY = 12; // Industry standard window size
@@ -39,7 +39,7 @@ class ModuleGemma extends BaseModule {
         };
       }
 
-      // Check availablity of models (Prioritize Fast 2B over 9B)
+      // Check availablity of models (Prioritize Gemma 3 1B)
       const availableModel = await this.checkModelAvailable();
       
       if (!availableModel) {
@@ -53,7 +53,7 @@ class ModuleGemma extends BaseModule {
         };
       }
       
-      this.modelName = availableModel; // Set the found model (e.g., 'gemma2:2b')
+      this.modelName = availableModel; // Set the found model (e.g., 'gemma3:1b')
       
       this.isOllamaAvailable = true;
       this.isInitialized = true;
@@ -68,7 +68,7 @@ class ModuleGemma extends BaseModule {
   async checkOllamaAvailable() {
     if (window.electronAPI && window.electronAPI.ollamaCheckSetup) {
       try {
-        const preferredModel = localStorage.getItem('ai_model') || 'gemma2:2b';
+        const preferredModel = localStorage.getItem('ai_model') || 'gemma3:1b';
         const result = await window.electronAPI.ollamaCheckSetup(preferredModel);
         console.log('[GemmaModule] IPC Ollama Check Result:', result);
         // We consider it available if it's running and API is responding
@@ -99,7 +99,11 @@ class ModuleGemma extends BaseModule {
             const models = verifyResult.models;
             console.log('[GemmaModule] IPC Available Ollama Models:', models);
             
-            // Check for Admin Preferred Model
+            // 1. High Priority: Always use Gemma 3 1B if available (Our migration goal)
+            const gemma3Match = models.find(m => m.includes('gemma3:1b') || m.includes('gemma3'));
+            if (gemma3Match) return gemma3Match;
+
+            // 2. Check for Admin Preferred Model (If not gemma3)
             const preferredModel = localStorage.getItem('ai_model');
             if (preferredModel) {
                 const match = models.find(m => m.includes(preferredModel));
@@ -108,8 +112,6 @@ class ModuleGemma extends BaseModule {
 
             // Fallback priorities
             if (models.some(m => m.includes('gemma2:2b'))) return models.find(m => m.includes('gemma2:2b'));
-            if (models.some(m => m.includes('gemma2:9b'))) return models.find(m => m.includes('gemma2:9b'));
-            if (models.some(m => m.includes('gemma2'))) return models.find(m => m.includes('gemma2'));
             
             return models[0]; // Any model is better than none
         }
@@ -133,13 +135,13 @@ class ModuleGemma extends BaseModule {
           if (match) return match;
       }
 
-      const fastModel = modelNames.find(name => name.includes('gemma2:2b'));
+      const fastModel = modelNames.find(name => name.includes('gemma3:1b'));
       if (fastModel) return fastModel;
 
-      const smartModel = modelNames.find(name => name.includes('gemma2:9b'));
+      const smartModel = modelNames.find(name => name.includes('gemma3'));
       if (smartModel) return smartModel;
 
-      const anyGemma = modelNames.find(name => name.includes('gemma2'));
+      const anyGemma = modelNames.find(name => name.includes('gemma2:2b'));
       if (anyGemma) return anyGemma;
 
       return null;
@@ -315,7 +317,7 @@ class ModuleGemma extends BaseModule {
 
       const modelAvailable = await this.checkModelAvailable();
       if (!modelAvailable) {
-        return { success: false, error: 'Gemma 2 9B model not found' };
+        return { success: false, error: 'Gemma 3 1B model not found' };
       }
 
       // Test with a simple question

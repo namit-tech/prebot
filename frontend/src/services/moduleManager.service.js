@@ -1,5 +1,6 @@
 import ModulePredefined from '../modules/ModulePredefined';
 import ModuleGemma from '../modules/ModuleGemma';
+import ModuleGemini from '../modules/ModuleGemini';
 import authService from './auth.service';
 
 /**
@@ -17,33 +18,53 @@ class ModuleManager {
    * Register available modules
    */
   async registerModules() {
+    // Check if we are in Special Edition mode
+    let isSpecialEdition = false;
+    if (window.electronAPI && window.electronAPI.isSpecialEdition) {
+        isSpecialEdition = await window.electronAPI.isSpecialEdition();
+        if (isSpecialEdition) console.log('[ModuleManager] 🛡️ Special Edition detected: Filtering AI Brains from UI');
+    }
+
     // Get allowed modules from license
     const allowedModels = authService.getStoredModels();
     
-    // Always register 'predefined' module as it is used for Mobile Presets management
-    // regardless of whether it's the primary AI responder.
+    // Always register 'predefined' module
     if (!this.modules.has('predefined')) {
       this.modules.set('predefined', new ModulePredefined());
     }
     
-    // Support both 'gemini' (old) and 'gemma' (new) for backward compatibility
-    if (allowedModels.includes('gemma') || allowedModels.includes('gemini')) {
+    // Register Offline Brain (Gemma) & Online Brain (Gemini)
+    // Only register these if NOT in Special Edition mode
+    const hasAIAccess = (allowedModels.includes('gemma') || allowedModels.includes('gemini')) && !isSpecialEdition;
+
+    if (hasAIAccess) {
       if (!this.modules.has('gemma')) {
-        this.modules.set('gemma', new ModuleGemma());
+        const module = new ModuleGemma();
+        module.name = 'Offline AI Brain';
+        this.modules.set('gemma', module);
       }
-      // Also register as 'gemini' for backward compatibility but internal only
-      if (allowedModels.includes('gemini')) {
-        this.modules.set('gemini', this.modules.get('gemma'));
+      if (!this.modules.has('gemini')) {
+        const module = new ModuleGemini();
+        module.name = 'Cloud AI Brain';
+        this.modules.set('gemini', module);
       }
     }
 
-    // Filter available modules by license. 
-    // We treat 'gemma' as the canonical UI ID, so we show it if the user has either 'gemma' or 'gemini' in their license.
-    this.availableModules = Array.from(this.modules.keys()).filter(key => {
-      if (key === 'gemini') return false; // Always hide alias from UI
-      if (key === 'gemma') return allowedModels.includes('gemma') || allowedModels.includes('gemini');
-      return allowedModels.includes(key);
-    });
+    // Final list of available modules
+    const finalModules = [];
+    
+    // Always include predefined if licensed
+    if (allowedModels.includes('predefined')) {
+      finalModules.push('predefined');
+    }
+
+    // Include both AI heads if there is any AI access (and not filtered by Special Edition)
+    if (hasAIAccess) {
+      finalModules.push('gemma');
+      finalModules.push('gemini');
+    }
+
+    this.availableModules = Array.from(new Set(finalModules));
     return this.availableModules;
   }
 

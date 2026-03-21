@@ -166,7 +166,7 @@ function httpGet(url, timeoutMs = 3000) {
  * Test connection to Ollama API
  */
 async function testOllamaConnection() {
-  const urls = ['http://127.0.0.1:11434/api/tags', 'http://localhost:11434/api/tags'];
+  const urls = ['http://127.0.0.1:11436/api/tags', 'http://localhost:11436/api/tags', 'http://127.0.0.1:11434/api/tags'];
   
   for (const url of urls) {
     try {
@@ -319,8 +319,17 @@ async function configureOllama(logger) {
 /**
  * Restart Ollama service
  */
-async function restartOllama(logger) {
+let isRestarting = false;
+
+async function restartOllama(logger, logPath = null) {
+  if (isRestarting) {
+      console.log('[OllamaSetup:Restart] Restart already in progress, skipping...');
+      return { success: true };
+  }
+  isRestarting = true;
+  
   const { exec, spawn } = require('child_process');
+  const fs = require('fs');
   
   const log = (msg) => {
       console.log(`[OllamaSetup:Restart] ${msg}`);
@@ -332,8 +341,8 @@ async function restartOllama(logger) {
 
     if (process.platform === 'win32') {
       // Windows: Kill and restart
-      log('Attempting to kill any existing Ollama processes...');
-      const processesToKill = ['ollama.exe', 'Ollama.exe', 'ollama app.exe'];
+      log('Attempting to kill any existing Ollama core engines...');
+      const processesToKill = ['ollama.exe', 'Ollama.exe']; // DO NOT kill 'ollama app.exe' here as users use it as their UI
       for (const proc of processesToKill) {
           try {
               await execAsync(`taskkill /F /IM "${proc}"`);
@@ -354,16 +363,25 @@ async function restartOllama(logger) {
         const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
         const defaultPath = path.join(localAppData, 'Programs', 'Ollama', 'ollama.exe');
         
-        log('Spawning HEADLESS AI service...');
-        const spawnEnv = { ...process.env, OLLAMA_ORIGINS: "*", OLLAMA_HOST: "127.0.0.1:11434" };
-        
         const cmd = fs.existsSync(defaultPath) ? defaultPath : 'ollama';
-        log(`Using executable: ${cmd}`);
+        
+        // Start Ollama on port 11436 to leave 11434 open for the bridge
+        const spawnEnv = { 
+            ...process.env, 
+            OLLAMA_ORIGINS: "*", 
+            OLLAMA_HOST: "127.0.0.1:11436",
+            OLLAMA_DEBUG: "1" // Enable verbose engine logs
+        };
+        
+        log(`Spawning HEADLESS AI service at ${cmd} on port 11436...`);
+        const logPath = path.join(process.cwd(), 'ollama-engine.log');
+        const out = fs.openSync(logPath, 'a');
+        const err = fs.openSync(logPath, 'a');
 
         const child = spawn(cmd, ['serve'], {
-          detached: true,
-          stdio: 'ignore',
-          shell: false,
+          detached: false, // Keep as child to prevent orphaned processes
+          stdio: ['ignore', out, err],
+          shell: true, // Required for some Windows environments
           env: spawnEnv
         });
 
@@ -376,6 +394,9 @@ async function restartOllama(logger) {
                      stdio: 'ignore',
                      shell: false,
                      env: spawnEnv
+                 });
+                 childFallback.on('error', (fallbackErr) => {
+                     log(`Fallback spawn error: ${fallbackErr.message}`);
                  });
                  childFallback.unref();
              }
@@ -431,6 +452,8 @@ async function restartOllama(logger) {
     log(`Failed to restart Ollama: ${error.message}`);
     // If global error, rethrow
     throw new Error('Failed to restart Ollama: ' + error.message);
+  } finally {
+    isRestarting = false;
   }
 }
 
@@ -451,7 +474,7 @@ async function verifyOllamaConnection(logger) {
     attempts++;
     log(`Attempt ${attempts}/${maxAttempts}...`);
     
-    const urls = ['http://127.0.0.1:11434/api/tags', 'http://localhost:11434/api/tags'];
+    const urls = ['http://127.0.0.1:11436/api/tags', 'http://localhost:11436/api/tags', 'http://127.0.0.1:11434/api/tags'];
     for (const url of urls) {
       try {
         log(`Trying ${url}...`);
@@ -531,10 +554,18 @@ async function installOllamaModel(modelName, logger) {
       const cmd = fs.existsSync(defaultPath) ? defaultPath : 'ollama'; 
       log(`Using AI engine at: ${cmd}`);
       
-      const spawnEnv = { ...process.env, OLLAMA_ORIGINS: "*", OLLAMA_HOST: "127.0.0.1:11434" };
+      const spawnEnv = { 
+        ...process.env, 
+        OLLAMA_ORIGINS: "*", 
+        OLLAMA_HOST: "127.0.0.1:11436" // Always use bridge-compatible port for headless pulls
+      };
       const child = spawn(cmd, ['pull', modelName], { env: spawnEnv });
   
       let output = '';
+  
+      child.on('error', (err) => {
+        log(`Failed to start AI pull process: ${err.message}`);
+      });
   
       child.stdout.on('data', (data) => {
         const text = data.toString();
@@ -683,9 +714,6 @@ async function installOllama(logger) {
         stdio: 'ignore'
       });
       
-      // Don't unref, we want to wait (but detached allows it to survive if we crash)
-      // child.unref(); 
-
       child.on('error', (err) => {
         log(`❌ Failed to launch installer: ${err.message}`);
         reject(new Error('Failed to launch installer: ' + err.message));

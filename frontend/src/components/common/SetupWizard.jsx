@@ -32,7 +32,8 @@ const SetupWizard = ({ isOpen, onClose, onComplete, targetModel = 'gemma2:9b' })
 
     try {
       // 1. Check Ollama
-      if (!check.installed) {
+      const checkResult = await window.electronAPI.ollamaCheck();
+      if (!checkResult.installed) {
         await installOllama();
       } else {
         await checkModel();
