@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { FaRobot, FaExclamationTriangle, FaDownload, FaArrowLeft } from 'react-icons/fa';
+import { FaRobot, FaExclamationTriangle, FaDownload, FaArrowLeft, FaShieldAlt } from 'react-icons/fa';
+import { Link } from 'react-router-dom';
 import DownloadPortal from '../client/DownloadPortal';
 
 const Login = () => {
@@ -113,7 +114,7 @@ const Login = () => {
               {loading ? 'Logging in...' : 'Login'}
             </button>
 
-            <div className="pt-4 border-t border-gray-100">
+            <div className="pt-4 border-t border-gray-100 flex flex-col gap-3">
               <button
                 type="button"
                 onClick={() => setView('download')}
@@ -122,6 +123,14 @@ const Login = () => {
                 <FaDownload className="text-primary-600" />
                 DOWNLOAD PREBOT APP
               </button>
+
+              <Link
+                to="/privacy-policy"
+                className="w-full flex items-center justify-center gap-2 py-2 px-4 text-gray-400 hover:text-gray-600 transition-all text-xs font-black uppercase tracking-widest"
+              >
+                <FaShieldAlt className="text-gray-400" />
+                Privacy Policy
+              </Link>
             </div>
           </form>
         </div>
