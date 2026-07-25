@@ -13,7 +13,7 @@ async function run() {
     try {
         console.log('🔪 Killing lingering Electron processes...');
         try { execSync('taskkill /F /IM electron.exe', { stdio: 'ignore' }); } catch (e) {}
-        try { execSync('taskkill /F /IM "Offline AI Assistant.exe"', { stdio: 'ignore' }); } catch (e) {}
+        try { execSync('taskkill /F /IM "Offline AI Chatbot.exe"', { stdio: 'ignore' }); } catch (e) {}
         console.log('✅ Processes killed.');
     } catch (e) {
         console.log('ℹ️ No lingering processes found (or failed to kill).');
@@ -84,7 +84,7 @@ async function run() {
     build.on('close', (code) => {
         if (code === 0) {
             console.log('\n✅ BUILD SUCCESSFUL!');
-            console.log('📁 Exe location: dist/Offline AI Assistant 1.0.0.exe');
+            console.log('📁 Exe location: dist/Offline AI Chatbot 1.0.0.exe');
         } else {
             console.error('\n❌ Build Failed.');
         }

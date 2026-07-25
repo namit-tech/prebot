@@ -9,9 +9,9 @@ echo ==========================================
 echo.
 
 REM Check for existing server instance
-netstat -an | findstr :3000 >nul 2>&1
+netstat -an | findstr :5001 >nul 2>&1
 if %errorlevel% equ 0 (
-    echo ℹ️  Server already running on port 3000
+    echo ℹ️  Server already running on port 5001
     echo.
 ) else (
     echo 🔍 Checking Node.js installation...
@@ -63,7 +63,7 @@ REM Clear any spaces from IP
 set IP=%IP: =%
 
 echo 📱 Scan QR Code to connect from mobile:
-echo 🌐 Or visit: http://%IP%:3000
+echo 🌐 Or visit: http://%IP%:5001
 echo.
 
 REM Start electron with server mode

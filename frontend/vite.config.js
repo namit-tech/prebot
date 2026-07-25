@@ -3,10 +3,17 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
-  base: './', // Ensure relative paths for Electron
+  base: './',
   server: {
     port: 5173,
-    open: true
+    open: true,
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    }
+  },
+  optimizeDeps: {
+    exclude: ['@ricky0123/vad-web', 'onnxruntime-web', '@sapphi-red/web-noise-suppressor']
   },
   build: {
     outDir: 'dist',

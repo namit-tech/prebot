@@ -18,7 +18,7 @@ try {
         const interfaces = networkInterfaces[interfaceName];
         interfaces.forEach(netInterface => {
             if (netInterface.family === 'IPv4' && !netInterface.internal) {
-                console.log(`📱 Mobile URL: http://${netInterface.address}:3000/mobile`);
+                console.log(`📱 Mobile URL: http://${netInterface.address}:${server.port}/mobile`);
             }
         });
     });
@@ -35,7 +35,7 @@ try {
     console.error('Please check:');
     console.error('1. Node.js is installed');
     console.error('2. Dependencies are installed (run: npm install)');
-    console.error('3. Port 3000 is not in use');
+    console.error('3. Port is not in use');
     console.error('');
     
     process.exit(1);

@@ -3,154 +3,283 @@ const { spawn, execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+const http = require('http');
 const EventEmitter = require('events');
+
+const SERVER_PORT = 8899;
+const NOISE_TAGS = [
+    '[MUSIC PLAYING]', '[MUSIC]', '[BLANK_AUDIO]', '[NOISE]', '[LAUGHTER]',
+    '[APPLAUSE]', '[SILENCE]', '[Start speaking]', '(silence)', '(whistling)',
+    '(beeping)', '(chiming)', '(birds chirping)', '(scissors snipping)',
+    '(slurping)', 'Beep beep beep', 'beep beep beep', '(Silence)', '(audio blanks)'
+];
 
 class WhisperHandler extends EventEmitter {
     constructor() {
         super();
         this.isActive = false;
-        this.currentLanguage = 'en';
+        this.serverProcess = null;
+        this.serverReady = false;
+        this.serverStarting = false;
     }
 
     getPaths() {
-        // Find the base path, handling packaged vs dev environments
         let appPath = app.getAppPath();
-        
-        // Handle ASAR: External binaries and models CANNOT be read from inside app.asar
-        // If we are in asar, we must point to the unpacked version
         if (appPath.includes('app.asar')) {
             appPath = appPath.replace('app.asar', 'app.asar.unpacked');
         }
+        const appDir = path.join(appPath, 'assets', 'whisper');
+        const udDir = path.join(app.getPath('userData'), 'assets', 'whisper');
 
-        const whisperDir = path.join(appPath, 'assets', 'whisper');
-        const cliPath = path.join(whisperDir, 'Release', 'whisper-cli.exe');
-
-        // Model can be in resources (packed) or userData (setup via app)
-        const userDataPath = app.getPath('userData');
-        const userDataModelPath = path.join(userDataPath, 'assets', 'whisper', 'ggml-base.en-q5_1.bin');
-        
-        // Prefer userData (the downloaded one) as it's guaranteed to be on disk
-        const modelPath = fs.existsSync(userDataModelPath) ? userDataModelPath : path.join(whisperDir, 'ggml-base.en-q5_1.bin');
-
-        console.log(`[Whisper-Paths] Binary: ${cliPath}`);
-        console.log(`[Whisper-Paths] Model: ${modelPath}`);
+        // Prefer userData copies (deployed on first run in packaged builds)
+        const pick = (sub) => {
+            const ud = path.join(udDir, sub);
+            return fs.existsSync(ud) ? ud : path.join(appDir, sub);
+        };
 
         return {
-            exePath: cliPath,
-            modelPath: modelPath,
-            whisperDir
+            exePath:    pick(path.join('Release', 'whisper-cli.exe')),
+            serverPath: pick(path.join('Release', 'whisper-server.exe')),
+            modelPath:  pick('ggml-base.en-q5_1.bin'),
         };
     }
 
-    /**
-     * Transcribe a WAV audio file using whisper-cli.exe (batch mode).
-     * This gives maximum accuracy because whisper processes the entire
-     * recording at once with full context — no real-time pressure.
-     */
-    async transcribeFile(wavPath, language = 'en') {
-        const { exePath, modelPath } = this.getPaths();
-        const cpuCores = os.cpus().length || 4;
-        const threads = Math.max(1, Math.min(cpuCores - 1, 8));
+    cleanTranscription(text) {
+        let t = text || '';
+        NOISE_TAGS.forEach(tag => { t = t.split(tag).join(''); });
+        return t.trim();
+    }
 
-        console.log(`[Whisper-Batch] Transcribing: ${wavPath}`);
-        console.log(`[Whisper-Batch] Model: ${modelPath}`);
-        console.log(`[Whisper-Batch] Threads: ${threads}, Language: ${language}`);
+    // --- Server lifecycle ---
 
-        if (!fs.existsSync(exePath)) {
-            const error = `Whisper CLI not found at: ${exePath}`;
-            this.emit('error', error);
-            return { success: false, error };
+    async ensureServerRunning() {
+        if (this.serverReady && this.serverProcess && !this.serverProcess.killed) return true;
+
+        // Another call already started the server — wait for it
+        if (this.serverStarting) {
+            return new Promise((resolve) => {
+                const poll = setInterval(() => {
+                    if (!this.serverStarting) { clearInterval(poll); resolve(this.serverReady); }
+                }, 250);
+                setTimeout(() => { clearInterval(poll); resolve(false); }, 16000);
+            });
         }
 
+        // Orphan check: if a previous crash left a server running, reuse it rather than fighting for the port
+        const alreadyUp = await this.pollPort();
+        if (alreadyUp) {
+            this.serverReady = true;
+            this.serverStarting = false;
+            console.log('[WhisperServer] Reusing existing server on port', SERVER_PORT);
+            return true;
+        }
+
+        const { serverPath, modelPath } = this.getPaths();
+        if (!fs.existsSync(serverPath)) {
+            console.warn('[WhisperServer] whisper-server.exe not found:', serverPath);
+            return false;
+        }
         if (!fs.existsSync(modelPath)) {
-            const error = `Whisper model not found at: ${modelPath}`;
-            this.emit('error', error);
-            return { success: false, error };
+            console.warn('[WhisperServer] Model not found:', modelPath);
+            return false;
         }
 
-        if (!fs.existsSync(wavPath)) {
-            const error = `Audio file not found at: ${wavPath}`;
-            this.emit('error', error);
-            return { success: false, error };
-        }
-
-        this.isActive = true;
-        this.emit('status', 'PROCESSING');
-        this.emit('diag', `Transcribing audio (${threads} threads, beam 5)...`);
+        this.serverStarting = true;
+        const threads = Math.max(1, Math.min((os.cpus().length || 4) - 1, 8));
 
         return new Promise((resolve) => {
             const args = [
                 '-m', modelPath,
                 '-t', threads.toString(),
+                '--host', '127.0.0.1',
+                '--port', SERVER_PORT.toString(),
+            ];
+
+            console.log(`[WhisperServer] Spawning on port ${SERVER_PORT} (${threads} threads)...`);
+            this.serverProcess = spawn(serverPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+            let resolved = false;
+            const markReady = () => {
+                if (resolved) return;
+                resolved = true;
+                this.serverReady = true;
+                this.serverStarting = false;
+                console.log('[WhisperServer] ✅ Ready — model warm in RAM');
+                resolve(true);
+            };
+            const markFailed = () => {
+                if (resolved) return;
+                resolved = true;
+                this.serverStarting = false;
+                resolve(false);
+            };
+
+            const onOutput = (data) => {
+                const txt = data.toString();
+                if (txt.trim()) console.log('[WhisperServer]', txt.trim().slice(0, 150));
+                if (txt.toLowerCase().includes('listening') || txt.includes('HTTP server')) markReady();
+            };
+
+            this.serverProcess.stdout.on('data', onOutput);
+            this.serverProcess.stderr.on('data', onOutput);
+
+            this.serverProcess.on('close', (code) => {
+                console.log(`[WhisperServer] Exited (code ${code})`);
+                this.serverReady = false;
+                this.serverProcess = null;
+                this.serverStarting = false;
+            });
+
+            this.serverProcess.on('error', (err) => {
+                console.error('[WhisperServer] Spawn error:', err.message);
+                markFailed();
+            });
+
+            // Timeout: model load can take ~5s, give 14s total then poll the port once
+            setTimeout(async () => {
+                if (resolved) return;
+                console.log('[WhisperServer] No "listening" line yet — polling port...');
+                const up = await this.pollPort();
+                if (up) { markReady(); } else { console.warn('[WhisperServer] Startup timeout'); markFailed(); }
+            }, 14000);
+        });
+    }
+
+    pollPort() {
+        return new Promise((resolve) => {
+            const req = http.get(`http://127.0.0.1:${SERVER_PORT}/`, (res) => {
+                res.resume();
+                resolve(true);
+            });
+            req.on('error', () => resolve(false));
+            req.setTimeout(2000, () => { req.destroy(); resolve(false); });
+        });
+    }
+
+    stopServer() {
+        if (this.serverProcess) {
+            try { this.serverProcess.kill(); } catch (e) {}
+            this.serverProcess = null;
+            this.serverReady = false;
+            console.log('[WhisperServer] Stopped');
+        }
+    }
+
+    // --- Transcription ---
+
+    async transcribeViaServer(wavPath, language) {
+        const boundary = `whisper${Date.now()}`;
+        const fileBytes = fs.readFileSync(wavPath);
+        const name = path.basename(wavPath);
+
+        // Build multipart/form-data manually — no external deps
+        const body = Buffer.concat([
+            Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: audio/wav\r\n\r\n`),
+            fileBytes,
+            Buffer.from(`\r\n--${boundary}\r\nContent-Disposition: form-data; name="language"\r\n\r\n${language}\r\n--${boundary}--\r\n`),
+        ]);
+
+        return new Promise((resolve, reject) => {
+            const req = http.request({
+                hostname: '127.0.0.1',
+                port: SERVER_PORT,
+                path: '/inference',
+                method: 'POST',
+                headers: {
+                    'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                    'Content-Length': body.length,
+                },
+            }, (res) => {
+                let raw = '';
+                res.on('data', c => { raw += c; });
+                res.on('end', () => {
+                    try {
+                        const json = JSON.parse(raw);
+                        resolve({ success: true, text: this.cleanTranscription(json.text || '') });
+                    } catch (e) {
+                        resolve({ success: false, error: 'Bad JSON from whisper-server' });
+                    }
+                });
+            });
+            req.on('error', reject);
+            req.setTimeout(30000, () => { req.destroy(); reject(new Error('Inference timeout')); });
+            req.write(body);
+            req.end();
+        });
+    }
+
+    /**
+     * Main entry point called by IPC handler.
+     * Fast path: whisper-server (model warm) → ~300-500ms.
+     * Fallback: whisper-cli (cold start) → 2-5s.
+     */
+    async transcribeFile(wavPath, language = 'en') {
+        this.isActive = true;
+        this.emit('status', 'PROCESSING');
+        this.emit('diag', 'Transcribing audio...');
+
+        const serverUp = await this.ensureServerRunning();
+        if (serverUp) {
+            try {
+                const t0 = Date.now();
+                const result = await this.transcribeViaServer(wavPath, language);
+                const elapsed = ((Date.now() - t0) / 1000).toFixed(2);
+                console.log(`[WhisperServer] ⚡ ${elapsed}s — "${result.text}"`);
+                this.isActive = false;
+                this.emit('status', 'OFFLINE');
+                try { fs.unlinkSync(wavPath); } catch (e) {}
+                return result;
+            } catch (err) {
+                console.warn('[WhisperServer] Request failed — falling back to CLI:', err.message);
+                this.serverReady = false; // force retry next time
+            }
+        }
+
+        return this.transcribeViaCLI(wavPath, language);
+    }
+
+    async transcribeViaCLI(wavPath, language = 'en') {
+        const { exePath, modelPath } = this.getPaths();
+        const threads = Math.max(1, Math.min((os.cpus().length || 4) - 1, 8));
+
+        console.log(`[Whisper-CLI] Fallback: ${wavPath} (${threads} threads, lang: ${language})`);
+
+        if (!fs.existsSync(exePath)) return { success: false, error: `Whisper CLI not found: ${exePath}` };
+        if (!fs.existsSync(modelPath)) return { success: false, error: `Model not found: ${modelPath}` };
+        if (!fs.existsSync(wavPath)) return { success: false, error: `Audio not found: ${wavPath}` };
+
+        return new Promise((resolve) => {
+            execFile(exePath, [
+                '-m', modelPath,
+                '-t', threads.toString(),
                 '--beam-size', '2',
                 '--language', language,
                 '--no-timestamps',
-                '-f', wavPath
-            ];
-
-            console.log(`[Whisper-Batch] Command: ${exePath} ${args.join(' ')}`);
-
-            let stdout = '';
-            let stderr = '';
-
-            const proc = execFile(exePath, args, {
-                maxBuffer: 10 * 1024 * 1024, // 10MB buffer
-                timeout: 120000 // 2 minute timeout
-            }, (error, stdoutData, stderrData) => {
+                '-f', wavPath,
+            ], { maxBuffer: 10 * 1024 * 1024, timeout: 120000 }, (error, stdout) => {
                 this.isActive = false;
-                stdout = stdoutData || '';
-                stderr = stderrData || '';
+                this.emit('status', 'OFFLINE');
+                try { fs.unlinkSync(wavPath); } catch (e) {}
 
                 if (error) {
-                    console.error('[Whisper-Batch] Error:', error.message);
-                    this.emit('error', `Transcription failed: ${error.message}`);
-                    this.emit('status', 'OFFLINE');
+                    console.error('[Whisper-CLI] Error:', error.message);
                     resolve({ success: false, error: error.message });
                     return;
                 }
 
-                // Parse the output - whisper-cli outputs transcribed text to stdout
-                let transcription = stdout
-                    .split('\n')
-                    .map(line => line.trim())
-                    .filter(line => {
-                        // Skip empty lines, timestamp lines, and system output
-                        if (!line) return false;
-                        if (line.startsWith('[')) return false; // timestamps like [00:00:00.000 --> ...]
-                        if (line.includes('whisper_')) return false; // system logs
-                        if (line.includes('main:')) return false;
-                        return true;
-                    })
-                    .join(' ')
-                    .trim();
-
-                // Clean up common noise hallucinations
-                const noiseTags = [
-                    '[MUSIC PLAYING]', '[MUSIC]', '[BLANK_AUDIO]',
-                    '[NOISE]', '[LAUGHTER]', '[APPLAUSE]', '[SILENCE]',
-                    '[Start speaking]', '(silence)', '(whistling)',
-                    '(beeping)', '(chiming)', '(birds chirping)',
-                    '(scissors snipping)', '(slurping)',
-                    'Beep beep beep', 'beep beep beep',
-                    '(Silence)', '(audio blanks)'
-                ];
-                noiseTags.forEach(tag => {
-                    transcription = transcription.split(tag).join('').trim();
-                });
-
-                console.log(`[Whisper-Batch] Result: "${transcription}"`);
-                this.emit('diag', `Transcription complete: "${transcription.substring(0, 80)}..."`);
-                this.emit('status', 'OFFLINE');
-
-                // Clean up the temp WAV file
-                try { fs.unlinkSync(wavPath); } catch (e) { /* ignore */ }
-
+                const transcription = this.cleanTranscription(
+                    (stdout || '').split('\n')
+                        .map(l => l.trim())
+                        .filter(l => l && !l.startsWith('[') && !l.includes('whisper_') && !l.includes('main:'))
+                        .join(' ')
+                );
+                console.log(`[Whisper-CLI] Result: "${transcription}"`);
                 resolve({ success: true, text: transcription });
             });
         });
     }
 
-    // Legacy start/stop kept as no-ops for compatibility
+    // Legacy no-ops
     start() { this.isActive = true; }
     stop() { this.isActive = false; }
 }

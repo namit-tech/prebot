@@ -40,9 +40,22 @@ async function checkOllamaSetup(logger, targetModel = null) {
     const corsConfigured = process.env.OLLAMA_ORIGINS !== undefined;
     log(`CORS Configured: ${corsConfigured} (${process.env.OLLAMA_ORIGINS})`);
     
-    // Check if Ollama is running
+    // Check if Ollama or LM Studio process is running
     const ollamaRunning = await checkOllamaRunning();
-    log(`Ollama Running: ${ollamaRunning}`);
+    log(`Ollama/LM-Studio Running: ${ollamaRunning}`);
+
+    // Separate LM Studio process detection so the UI can give targeted guidance
+    let lmStudioRunning = false;
+    try {
+      if (process.platform === 'win32') {
+        const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq LM Studio.exe"', { timeout: 3000 });
+        lmStudioRunning = stdout.toLowerCase().includes('lm studio.exe');
+      } else if (process.platform === 'darwin') {
+        const { stdout } = await execAsync('pgrep -x "LM Studio"', { timeout: 3000 });
+        lmStudioRunning = stdout.trim().length > 0;
+      }
+    } catch (e) { /* process not found is fine */ }
+    log(`LM Studio Process: ${lmStudioRunning}`);
     
     // Check if Ollama is installed
     let ollamaInstalled = false;
@@ -101,6 +114,7 @@ async function checkOllamaSetup(logger, targetModel = null) {
         corsConfigured,
         ollamaInstalled,
         ollamaRunning,
+        lmStudioRunning,
         apiAvailable,
         hasModels,
         availableModels,
@@ -122,20 +136,52 @@ async function checkOllamaSetup(logger, targetModel = null) {
  * Check if Ollama process is running
  */
 async function checkOllamaRunning() {
+  // First: check by process name
   try {
     if (process.platform === 'win32') {
-      const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq ollama.exe"', { timeout: 3000 });
-      return stdout.includes('ollama.exe');
+      let isRunning = false;
+      try {
+        const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq ollama.exe"', { timeout: 3000 });
+        if (stdout.toLowerCase().includes('ollama.exe')) isRunning = true;
+      } catch (e) { /* ignore */ }
+      
+      if (!isRunning) {
+        try {
+          const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq LM Studio.exe"', { timeout: 3000 });
+          if (stdout.toLowerCase().includes('lm studio.exe')) isRunning = true;
+        } catch (e) { /* ignore */ }
+      }
+
+      if (!isRunning) {
+        try {
+          const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq ollama app.exe"', { timeout: 3000 });
+          if (stdout.toLowerCase().includes('ollama app.exe')) isRunning = true;
+        } catch (e) { /* ignore */ }
+      }
+      
+      if (isRunning) return true;
     } else if (process.platform === 'darwin') {
-      const { stdout } = await execAsync('pgrep -x ollama', { timeout: 3000 });
-      return stdout.trim().length > 0;
+      const { stdout } = await execAsync('pgrep -x ollama || pgrep -x "LM Studio"', { timeout: 3000 });
+      if (stdout.trim().length > 0) return true;
     } else {
       const { stdout } = await execAsync('pgrep ollama', { timeout: 3000 });
-      return stdout.trim().length > 0;
+      if (stdout.trim().length > 0) return true;
     }
   } catch (error) {
-    return false;
+    // Process list check failed — fall through to API probe
   }
+
+  // Fallback: probe known API ports directly (handles cases where process
+  // name doesn't match our filter, e.g. running inside a service wrapper)
+  const probePorts = [11434, 11436, 1234];
+  for (const port of probePorts) {
+    try {
+      const resp = await httpGet(`http://127.0.0.1:${port}/`, 1500);
+      if (resp.ok || resp.status === 200) return true;
+    } catch (e) { /* port not listening */ }
+  }
+
+  return false;
 }
 
 /**
@@ -166,7 +212,12 @@ function httpGet(url, timeoutMs = 3000) {
  * Test connection to Ollama API
  */
 async function testOllamaConnection() {
-  const urls = ['http://127.0.0.1:11436/api/tags', 'http://localhost:11436/api/tags', 'http://127.0.0.1:11434/api/tags'];
+  const urls = [
+    'http://127.0.0.1:11436/api/tags', 
+    'http://localhost:11436/api/tags', 
+    'http://127.0.0.1:11434/api/tags',
+    'http://127.0.0.1:1234/v1/models' // LM Studio / OpenAI compatible
+  ];
   
   for (const url of urls) {
     try {
@@ -465,44 +516,58 @@ async function verifyOllamaConnection(logger) {
       console.log(`[OllamaSetup:Verify] ${msg}`);
       if (logger) logger(`[OllamaSetup:Verify] ${msg}`);
   };
+  
+  const checkUrls = [
+    { url: 'http://127.0.0.1:11436/api/tags', type: 'ollama' },
+    { url: 'http://localhost:11436/api/tags', type: 'ollama' },
+    { url: 'http://127.0.0.1:11434/api/tags', type: 'ollama' },
+    { url: 'http://127.0.0.1:1234/v1/models', type: 'openai' }
+  ];
 
   log('Verifying connection...');
   let attempts = 0;
-  const maxAttempts = 5;
+  const maxAttempts = 3;
   
   while (attempts < maxAttempts) {
     attempts++;
     log(`Attempt ${attempts}/${maxAttempts}...`);
     
-    const urls = ['http://127.0.0.1:11436/api/tags', 'http://localhost:11436/api/tags', 'http://127.0.0.1:11434/api/tags'];
-    for (const url of urls) {
+    for (const { url, type } of checkUrls) {
       try {
-        log(`Trying ${url}...`);
+        log(`Trying ${url} (${type})...`);
         const response = await httpGet(url, 5000);
         
         if (response.ok) {
           log('Connection Successful!');
           try {
             const data = JSON.parse(response.data);
-            const models = data.models || [];
-            const modelNames = models.map(m => m.name);
+            let models = [];
             
-            const hasGemma2b = modelNames.some(name => name.includes('gemma2:2b'));
-            const hasGemma9b = modelNames.some(name => name.includes('gemma2:9b'));
-            const hasAnyGemma = modelNames.some(name => name.includes('gemma'));
+            if (type === 'ollama') {
+              models = (data.models || []).map(m => m.name);
+            } else {
+              // OpenAI / LM Studio format
+              models = (data.data || []).map(m => m.id);
+            }
+            
+            const hasGemma3 = models.some(name => name.toLowerCase().includes('gemma3'));
+            const hasGemma2 = models.some(name => name.toLowerCase().includes('gemma2'));
+            const hasAnyGemma = models.some(name => name.toLowerCase().includes('gemma'));
             
             return {
               success: true,
               connected: true,
-              models: modelNames,
-              hasGemma2b,
-              hasGemma9b,
+              engineType: type,
+              baseUrl: url.replace(type === 'ollama' ? '/api/tags' : '/v1/models', ''),
+              models: models,
+              hasGemma3,
+              hasGemma2,
               hasAnyGemma,
-              recommendedModel: hasGemma2b ? 'gemma2:2b' : (hasGemma9b ? 'gemma2:9b' : null)
+              recommendedModel: hasGemma3 ? 'gemma3:1b' : (hasGemma2 ? 'gemma2:2b' : (models[0] || null))
             };
           } catch (parseErr) {
             log(`JSON parse error: ${parseErr.message}`);
-            return { success: true, connected: true, models: [] };
+            return { success: true, connected: true, engineType: type, models: [] };
           }
         }
         log(`Status for ${url}: ${response.status}`);
@@ -510,7 +575,7 @@ async function verifyOllamaConnection(logger) {
         log(`Error for ${url}: ${error.message} (Code: ${error.code || 'N/A'})`);
       }
     }
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise(resolve => setTimeout(resolve, 1500));
   }
   
   log('Connection timed out.');
@@ -687,33 +752,93 @@ async function installOllama(logger) {
       installerPath = path.join(__dirname, 'resources', 'installers', 'OllamaSetup.exe');
     }
 
+    // Validate if the installer file is a valid executable (not empty, corrupted, or all zeroes)
+    let isValidInstaller = false;
     if (installerPath && fs.existsSync(installerPath)) {
+      try {
+        const stats = fs.statSync(installerPath);
+        if (stats.size > 10 * 1024 * 1024) { // must be larger than 10MB
+          const fd = fs.openSync(installerPath, 'r');
+          const buffer = Buffer.alloc(2);
+          fs.readSync(fd, buffer, 0, 2, 0);
+          fs.closeSync(fd);
+          // Check for 'MZ' header (0x4D 0x5A)
+          if (buffer[0] === 0x4D && buffer[1] === 0x5A) {
+            isValidInstaller = true;
+          }
+        }
+      } catch (err) {
+        log(`Error validating installer: ${err.message}`);
+      }
+    }
+
+    if (isValidInstaller) {
       log(`Found bundled Ollama installer at: ${installerPath}`);
       bundledFound = true;
     } else {
-      log('Bundled installer not found. Attempting to download...');
+      log('Bundled installer not found or is corrupted/invalid. Attempting to download...');
       
       // 2. Download from Internet to Downloads folder (Permanent)
       const downloadDir = path.join(os.homedir(), 'Downloads');
       installerPath = path.join(downloadDir, 'OllamaSetup.exe');
       const downloadUrl = 'https://ollama.com/download/OllamaSetup.exe';
       
-      log(`Downloading from ${downloadUrl} to ${installerPath}...`);
-      await downloadFile(downloadUrl, installerPath);
-      log('Download complete.');
+      // Check if we already have a valid downloaded installer in Downloads to save bandwidth
+      let hasValidDownload = false;
+      if (fs.existsSync(installerPath)) {
+        try {
+          const stats = fs.statSync(installerPath);
+          if (stats.size > 10 * 1024 * 1024) {
+            const fd = fs.openSync(installerPath, 'r');
+            const buffer = Buffer.alloc(2);
+            fs.readSync(fd, buffer, 0, 2, 0);
+            fs.closeSync(fd);
+            if (buffer[0] === 0x4D && buffer[1] === 0x5A) {
+              hasValidDownload = true;
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (hasValidDownload) {
+        log(`Using previously downloaded installer in Downloads folder: ${installerPath}`);
+      } else {
+        log(`Downloading from ${downloadUrl} to ${installerPath}...`);
+        await downloadFile(downloadUrl, installerPath);
+        log('Download complete.');
+      }
     }
 
     log('Activating AI Core...');
-    
+
+    // Copy installer to system temp so it is a real local file with no OneDrive
+    // cloud-placeholder or Zone Identifier issues that would block UAC elevation.
+    const localInstallerPath = path.join(os.tmpdir(), 'OllamaSetup_prebot.exe');
+    try {
+      log('Staging installer to local temp directory...');
+      fs.copyFileSync(installerPath, localInstallerPath);
+      installerPath = localInstallerPath;
+      log(`Installer staged at: ${installerPath}`);
+    } catch (copyErr) {
+      log(`Warning: Could not stage installer to temp (${copyErr.message}). Proceeding with original path.`);
+    }
+
     return new Promise((resolve, reject) => {
-      const silentFlags = ['/VERYSILENT', '/SP-', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCANCEL', '/TASKS=""'];
-      log(`Running installer with advanced silent flags: ${installerPath} ${silentFlags.join(' ')}`);
-      
-      const child = spawn(installerPath, silentFlags, {
-        detached: true,
+      // Use PowerShell Start-Process -Verb RunAs so Windows shows the UAC prompt
+      // and we properly wait for the installer to finish before verifying.
+      // Unblock-File removes the Zone Identifier (Mark of the Web) first.
+      const escapedPath = installerPath.replace(/'/g, "''");
+      // Use $p.WaitForExit() instead of -Wait parameter, as -Wait waits on the entire process tree
+      // (which keeps it blocked forever because the installer launches 'ollama app.exe' at the end).
+      const psScript = `try { Unblock-File -Path '${escapedPath}' -ErrorAction SilentlyContinue; $p = Start-Process -FilePath '${escapedPath}' -ArgumentList '/VERYSILENT /SP- /SUPPRESSMSGBOXES /NORESTART /NOCANCEL' -Verb RunAs -PassThru; $p.WaitForExit(); exit $p.ExitCode } catch { exit 1 }`;
+
+      log(`Requesting elevation via PowerShell for: ${installerPath}`);
+
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psScript], {
+        detached: false,
         stdio: 'ignore'
       });
-      
+
       child.on('error', (err) => {
         log(`❌ Failed to launch installer: ${err.message}`);
         reject(new Error('Failed to launch installer: ' + err.message));
@@ -721,47 +846,82 @@ async function installOllama(logger) {
 
       child.on('close', async (code) => {
         log(`Installer process exited with code ${code}`);
-        
+
         if (code !== 0) {
-            log(`⚠️ Installer reported exit code ${code}. Check if it was canceled by user.`);
+            log(`⚠️ Installer reported exit code ${code}. May have been cancelled or permission was denied.`);
         }
 
-        // IMMEDIATELY KILL the auto-started Ollama GUI if it exists
-        // The installer launches the tray app even with silent flags.
-        // We kill it here so we can start a clean headless service in the next step.
-        log('Suppressing auto-started Ollama GUI...');
-        const killGUI = async () => {
-            const guiProcesses = ['ollama.exe', 'Ollama.exe', 'ollama app.exe'];
-            for (const pc of guiProcesses) {
-                try { await execAsync(`taskkill /F /IM "${pc}"`); } catch (e) {}
-            }
-        };
+        // Give the OS a moment to finish writing files after installer exits.
+        await new Promise(r => setTimeout(r, 3000));
 
-        await killGUI();
-        // Wait a small bit for OS to release file locks, but no stray background timers!
-        await new Promise(r => setTimeout(r, 2000));
-        await killGUI();
-
-        // 2. Check if file exists on disk
+        // Verify installation: check known paths first, then fall back to PATH.
         const localAppData = process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local');
-        const defaultPath = path.join(localAppData, 'Programs', 'Ollama', 'ollama.exe');
+        const verificationPaths = [
+          path.join(localAppData, 'Programs', 'Ollama', 'ollama.exe'),
+          path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'Ollama', 'ollama.exe'),
+        ];
 
-        log(`Verifying installation at: ${defaultPath}`);
-
-        // Check verification after a longer delay for slower PCs
-        log('Waiting 10 seconds for installation to finalize...');
-        await new Promise(resolve => setTimeout(resolve, 10000));
-
-        if (fs.existsSync(defaultPath)) {
-            log('✅ Verification successful. ollama.exe found.');
-            resolve({ 
-              success: true, 
-              message: 'Installer finished. Verification successful.' 
-            });
-        } else {
-             log(`❌ FAILED: File NOT found at ${defaultPath} after installation.`);
-             reject(new Error('Ollama installation could not be verified. Please install manually from https://ollama.com'));
+        log('Verifying installation...');
+        let ollamaFound = false;
+        const foundAtPath = verificationPaths.find(p => fs.existsSync(p));
+        if (foundAtPath) {
+            log(`✅ Verification successful. ollama.exe found at: ${foundAtPath}`);
+            ollamaFound = true;
         }
+
+        // Fallback: ollama may be on PATH even if not at the default location.
+        if (!ollamaFound) {
+          try {
+              await execAsync('ollama --version', { timeout: 5000 });
+              log('✅ Verification successful via PATH.');
+              ollamaFound = true;
+          } catch (e) { /* not in PATH yet */ }
+        }
+
+        if (!ollamaFound) {
+          const reason = code === 1
+              ? 'Setup was cancelled or administrator permission was denied. Please approve the UAC prompt and try again.'
+              : 'Ollama installation could not be verified. Please install manually from https://ollama.com';
+          log(`❌ FAILED: ${reason}`);
+          reject(new Error(reason));
+          return;
+        }
+
+        // --- Post-install: start a clean headless service ---
+        // Kill only the GUI tray app ("ollama app.exe"), leave the core
+        // server alone so we can restart it on the correct port.
+        log('Suppressing auto-started Ollama GUI tray...');
+        try { await execAsync('taskkill /F /IM "ollama app.exe"'); } catch (e) { /* not running */ }
+
+        // Now start the headless service on our preferred port via restartOllama.
+        log('Starting headless AI service...');
+        try {
+          await restartOllama(logger);
+          // Wait for the service to actually become responsive
+          let apiReady = false;
+          for (let i = 0; i < 8; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const resp = await httpGet('http://127.0.0.1:11436/', 2000);
+              if (resp.ok || resp.status === 200) { apiReady = true; break; }
+            } catch (e) { /* not ready yet */ }
+            // Also check default port in case restartOllama used it
+            try {
+              const resp2 = await httpGet('http://127.0.0.1:11434/', 2000);
+              if (resp2.ok || resp2.status === 200) { apiReady = true; break; }
+            } catch (e) { /* not ready yet */ }
+            log(`Waiting for AI service to start... (${i + 1}/8)`);
+          }
+          if (apiReady) {
+            log('✅ Headless AI service is running and responding.');
+          } else {
+            log('⚠️ AI service started but API not responding yet. It may still be initializing.');
+          }
+        } catch (restartErr) {
+          log(`⚠️ Could not start headless service: ${restartErr.message}. Will retry on next check.`);
+        }
+
+        resolve({ success: true, message: 'Installer finished. Verification successful.' });
       });
     });
 

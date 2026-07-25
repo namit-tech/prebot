@@ -1,4 +1,9 @@
-const { app, BrowserWindow, Menu, shell, ipcMain, dialog, globalShortcut } = require('electron');
+const { app, BrowserWindow, Menu, shell, ipcMain, dialog, globalShortcut, session } = require('electron');
+
+// Disable hardware acceleration to fix GPU process crashes on some Windows machines
+// This is often needed when running AI models or complex animations alongside Electron
+app.disableHardwareAcceleration();
+
 const path = require('path');
 const fs = require('fs');
 const ollamaSetup = require('./ollama-setup');
@@ -384,6 +389,35 @@ function createWindow() {
   }
 }
 
+
+// Allow WebSpeech API (used by Cloud AI Brain mode) to connect to Google's STT servers.
+// Without this, Electron's file:// context blocks the WebSocket that Chrome's built-in
+// speech recognition uses, resulting in an immediate 'network' error.
+app.commandLine.appendSwitch('enable-speech-input');
+app.commandLine.appendSwitch('disable-web-security'); // already set per-window; belt-and-suspenders here
+
+// Enable SharedArrayBuffer for Silero VAD (ONNX runtime needs it)
+app.on('ready', () => {
+  // Grant microphone + speech permission automatically — needed for WebSpeech API in file:// context.
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    const allowed = ['media', 'audioCapture', 'speech', 'microphone', 'camera'];
+    callback(allowed.includes(permission));
+  });
+
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    if (details.resourceType === 'mainFrame') {
+      callback({
+        responseHeaders: {
+          ...details.responseHeaders,
+          'Cross-Origin-Opener-Policy': ['same-origin'],
+          'Cross-Origin-Embedder-Policy': ['credentialless'],
+        }
+      });
+    } else {
+      callback({ responseHeaders: details.responseHeaders });
+    }
+  });
+});
 
 // Initialize Security and Bridge
 app.whenReady().then(async () => {
@@ -860,6 +894,14 @@ app.whenReady().then(async () => {
         console.error('❌ Failed to start embedded backend:', err);
     }
 
+    // Pre-warm Whisper server so the model is loaded in RAM before the first question.
+    // Runs in background — app startup is not blocked.
+    whisperHandler.ensureServerRunning().then(ready => {
+        console.log(ready
+            ? '✅ Whisper server warm — first transcription will be fast'
+            : '⚠️  Whisper server unavailable — will use CLI fallback');
+    });
+
     // [CLEANUP] Redundant auto-start removed. 
     // Ollama is now handled in the Bridge-Sync block above to ensure correct port release.
     if (!isSpecialEditionBuild && !process.argv.includes('--bridge')) {
@@ -920,6 +962,9 @@ app.on('before-quit', async (event) => {
       console.error('Error stopping PC2 server:', e);
     }
   }
+
+  // Stop whisper-server background process
+  whisperHandler.stopServer();
 
   // Force kill any lingering VLC processes (Windows)
   if (process.platform === 'win32') {

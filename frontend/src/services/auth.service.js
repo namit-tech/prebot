@@ -185,11 +185,9 @@ class AuthService {
           if (subscription.aiModel) {
              console.log(`💾 [AuthService] Saving AI Model Preference: ${subscription.aiModel}`);
              localStorage.setItem('ai_model', subscription.aiModel);
-          } else {
-             console.warn('⚠️ [AuthService] No AI Model in subscription data!');
-             // If not present in subscription (e.g. legacy), fallback to default
-             // Only if not already set? actually better to align with DB.
-             // If DB says nothing, default is 2b.
+          } else if (!localStorage.getItem('ai_model')) {
+             console.warn('⚠️ [AuthService] No AI Model in subscription - Defaulting to gemma3:1b');
+             localStorage.setItem('ai_model', 'gemma3:1b');
           }
         }
         

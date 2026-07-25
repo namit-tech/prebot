@@ -16,29 +16,61 @@ class ModuleGemini extends BaseModule {
       requiresNetwork: true // Requires internet
     });
     this.apiKey = localStorage.getItem('gemini_api_key') || '';
-    this.modelName = 'gemini-2.5-flash'; // Optimized for speed and search
+    this.modelName = 'gemini-2.5-flash'; // fallback; overridden by fetchBestModel() on init
     this.chatHistory = [];
     this.MAX_HISTORY = 10;
     this.systemContext = null;
   }
 
+  async fetchBestModel() {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models?key=${this.apiKey}`
+      );
+      if (!res.ok) return null;
+      const data = await res.json();
+      const available = (data.models || [])
+        .filter(m => m.supportedGenerationMethods?.includes('streamGenerateContent'))
+        .map(m => m.name.replace('models/', ''));
+
+      // Prefer newest flash → pro → any flash → first available
+      const preference = [
+        'gemini-2.5-flash', 'gemini-2.5-pro',
+        'gemini-2.5-flash', 'gemini-1.5-flash',
+      ];
+      for (const p of preference) {
+        if (available.includes(p)) return p;
+      }
+      return available.find(m => m.includes('flash')) || available[0] || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   async initialize() {
     this.apiKey = localStorage.getItem('gemini_api_key');
-    
+
     if (!this.apiKey) {
-      return { 
-        success: false, 
+      return {
+        success: false,
         error: 'Gemini API Key is missing. Please enter it in Settings.',
         code: 'REQUIRES_SETUP'
       };
     }
 
-    // Basic connectivity check (optional but recommended)
     try {
       if (!navigator.onLine) {
         return { success: false, error: 'Internet connection required for Online Mode.' };
       }
-      
+
+      const best = await this.fetchBestModel();
+      if (best) {
+        this.modelName = best;
+        console.log('[Gemini] Auto-selected model:', best);
+      } else {
+        console.warn('[Gemini] Could not fetch model list — using fallback:', this.modelName);
+      }
+
       this.isInitialized = true;
       this.isActive = true;
       return { success: true };
@@ -56,14 +88,14 @@ class ModuleGemini extends BaseModule {
     this.systemContext = context;
   }
 
-  async processQuestion(question) {
+  async processQuestion(question, onChunk = null) {
     if (!this.isInitialized || !this.isActive) {
       const initResult = await this.initialize();
       if (!initResult.success) throw new Error(initResult.error);
     }
 
     try {
-      const response = await this.callGeminiAPI(question);
+      const response = await this.callGeminiAPI(question, onChunk);
 
       return {
         success: true,
@@ -82,55 +114,119 @@ class ModuleGemini extends BaseModule {
     }
   }
 
-  async callGeminiAPI(question) {
+  async callGeminiAPI(question, onChunk = null, _retries = 2) {
     const userContext = localStorage.getItem('ai_system_instructions') || "You are a helpful, professional AI assistant. Keep responses concise.";
-    
-    // Prepare conversation messages
-    let prompt = `System Instructions: ${userContext}\n`;
+
+    // Detect TTS voice language — Gemini must respond in a language the voice can speak.
+    // Microsoft Zira (English) cannot pronounce Devanagari; response would be completely silent.
+    const ttsVoiceName = (JSON.parse(localStorage.getItem('voice_settings') || '{}').voice || '').toLowerCase();
+    const ttsLang = ttsVoiceName.includes('hindi') || ttsVoiceName.includes('hemant') || ttsVoiceName.includes('kalpana') ? 'Hindi'
+                  : ttsVoiceName.includes('tamil') ? 'Tamil'
+                  : ttsVoiceName.includes('telugu') ? 'Telugu'
+                  : ttsVoiceName.includes('bengali') ? 'Bengali'
+                  : 'English';
+
+    // systemInstruction is the authoritative field — Gemini follows it much more strictly than
+    // instructions embedded in the user turn content.
+    const systemText = `${userContext}\n\nLANGUAGE RULE: Always respond in ${ttsLang}. Never use any other language or script, regardless of what language the user speaks in.`;
+
+    let userPrompt = '';
     if (this.systemContext) {
-      prompt += `\nFoundation Knowledge:\n${this.systemContext}\n\nStrictly answer based on this knowledge if relevant.`;
+      userPrompt += `Foundation Knowledge:\n${this.systemContext}\n\nStrictly answer based on this knowledge if relevant.\n\n`;
     }
-    
-    // Simple implementation using Fetch API to avoid heavy dependencies on old hardware
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:generateContent?key=${this.apiKey}`;
-    
+    userPrompt += `User Question: ${question}`;
+
+    // Drop history turns that contain significant foreign-script content — they can bias Gemini
+    // into using that script even when system_instruction says otherwise.
+    const nonAsciiRatio = (str) => {
+      const nonAscii = (str.match(/[^\x00-\x7F]/g) || []).length;
+      return str.length > 0 ? nonAscii / str.length : 0;
+    };
+    const filteredHistory = ttsLang === 'English'
+      ? this.chatHistory.filter(msg => nonAsciiRatio(msg.content) < 0.3)
+      : this.chatHistory;
+
     const contents = [];
-    
-    // Add history (limited)
-    this.chatHistory.forEach(msg => {
+    filteredHistory.forEach(msg => {
       contents.push({ role: msg.role, parts: [{ text: msg.content }] });
     });
-    
-    // Add current question
-    contents.push({ role: 'user', parts: [{ text: `${prompt}\n\nUser Question: ${question}` }] });
+    contents.push({ role: 'user', parts: [{ text: userPrompt }] });
+
+    // Streaming endpoint — first token arrives much sooner than waiting for full response
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${this.modelName}:streamGenerateContent?key=${this.apiKey}&alt=sse`;
 
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: contents,
-        tools: [
-          { google_search: {} }
-        ],
+        system_instruction: { parts: [{ text: systemText }] },
+        contents,
         generationConfig: {
           temperature: 0.7,
-          maxOutputTokens: 800,
+          maxOutputTokens: 300, // Voice answers are short — less generation = faster first token
         }
       })
     });
 
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error?.message || 'Gemini API Error');
+      const errorData = await response.json().catch(() => ({}));
+      const msg = errorData.error?.message || `HTTP ${response.status}`;
+      if ((response.status === 503 || response.status === 429) && _retries > 0) {
+        console.warn(`[Gemini] ${response.status} — retrying (${_retries} left)...`);
+        await new Promise(r => setTimeout(r, 1200));
+        return this.callGeminiAPI(question, onChunk, _retries - 1);
+      }
+      throw new Error(msg);
     }
 
-    const data = await response.json();
-    const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || 'No response generated';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let aiResponse = '';
+    let sentenceBuffer = '';
 
-    // Update history
+    while (true) {
+      const { done, value } = reader ? await reader.read() : { done: true };
+      if (done) break;
+
+      const text = decoder.decode(value, { stream: true });
+      for (const line of text.split('\n')) {
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (!jsonStr || jsonStr === '[DONE]') continue;
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const token = parsed.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          if (token) {
+            aiResponse += token;
+            if (onChunk) {
+              sentenceBuffer += token;
+              // Split on sentence-ending punctuation
+              const sentenceEnd = /^(.*?[.!?])\s+(.*)$/s;
+              let m;
+              while ((m = sentenceEnd.exec(sentenceBuffer)) !== null) {
+                const complete = m[1].trim();
+                if (complete) onChunk(complete);
+                sentenceBuffer = m[2];
+              }
+              // Also split on comma after 10+ words so TTS starts sooner on long sentences
+              if (sentenceBuffer.split(/\s+/).length >= 10) {
+                const commaIdx = sentenceBuffer.indexOf(',');
+                if (commaIdx > 15) {
+                  onChunk(sentenceBuffer.substring(0, commaIdx).trim());
+                  sentenceBuffer = sentenceBuffer.substring(commaIdx + 1).trim();
+                }
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+
+    if (onChunk && sentenceBuffer.trim()) onChunk(sentenceBuffer.trim());
+    aiResponse = aiResponse || 'No response generated';
+
     this.chatHistory.push({ role: 'user', content: question });
     this.chatHistory.push({ role: 'model', content: aiResponse });
-    
     if (this.chatHistory.length > this.MAX_HISTORY * 2) {
       this.chatHistory = this.chatHistory.slice(-this.MAX_HISTORY * 2);
     }

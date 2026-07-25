@@ -29,6 +29,9 @@ const VoiceSettings = () => {
     const [showGuideSyncModal, setShowGuideSyncModal] = useState(false);
     const [showListeningLangModal, setShowListeningLangModal] = useState(false);
     const [helpOS, setHelpOS] = useState('win11'); // 'win10' or 'win11'
+    const [originalSettings, setOriginalSettings] = useState(null);
+
+    const isDirty = originalSettings && JSON.stringify(settings) !== JSON.stringify(originalSettings);
 
     // Initial Load
     useEffect(() => {
@@ -36,10 +39,15 @@ const VoiceSettings = () => {
         if (stored) {
             try {
                 const parsed = JSON.parse(stored);
-                if (parsed) setSettings(prev => ({ ...prev, ...parsed }));
+                if (parsed) {
+                    setSettings(prev => ({ ...prev, ...parsed }));
+                    setOriginalSettings(parsed);
+                }
             } catch (e) {
                 console.error('Failed to parse voice settings:', e);
             }
+        } else {
+            setOriginalSettings(settings);
         }
     }, []);
 
@@ -94,6 +102,7 @@ const VoiceSettings = () => {
     const saveSettings = async () => {
         const oldSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
         localStorage.setItem('voice_settings', JSON.stringify(settings));
+        setOriginalSettings(settings);
         
         // If language or profile changed and STT is active, restart it
         if (oldSettings.sttLanguage !== settings.sttLanguage || oldSettings.listeningProfile !== settings.listeningProfile) {
@@ -125,7 +134,13 @@ const VoiceSettings = () => {
     const filteredVoices = voices.filter(v => filterLang === 'All' || v.lang === filterLang);
 
     return (
-        <div className="bg-slate-50 rounded-[2rem] shadow-2xl border border-slate-200/50 overflow-hidden font-sans">
+        <div className="bg-slate-50 rounded-[2rem] shadow-2xl border border-slate-200/50 overflow-hidden font-sans relative">
+            {isDirty && (
+                <div className="bg-amber-500 text-white px-6 py-3 flex items-center gap-2 text-xs font-black uppercase tracking-wider animate-in slide-in-from-top duration-300">
+                    <FaInfoCircle className="animate-pulse text-sm" />
+                    <span>You have unsaved changes. Click "Save Configuration" below to apply!</span>
+                </div>
+            )}
             {/* Compact Header */}
             <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 px-6 py-4 flex justify-between items-center border-b border-white/5">
                 <div className="flex items-center gap-3">
@@ -451,8 +466,15 @@ const VoiceSettings = () => {
                     <button onClick={testVoice} className="flex-1 bg-white border border-slate-200 text-slate-600 px-6 py-3 rounded-2xl text-xs font-black hover:bg-slate-50 transition-all active:scale-95 shadow-sm">
                         DEBUG AUDIO
                     </button>
-                    <button onClick={saveSettings} className="flex-[3] bg-indigo-600 text-white px-6 py-3 rounded-2xl text-xs font-black shadow-lg shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest">
-                        Save Configuration
+                    <button 
+                        onClick={saveSettings} 
+                        className={`flex-[3] px-6 py-3 rounded-2xl text-xs font-black transition-all active:scale-95 flex items-center justify-center gap-2 uppercase tracking-widest ${
+                            isDirty 
+                                ? 'bg-indigo-600 text-white shadow-[0_0_25px_rgba(99,102,241,0.6)] hover:bg-indigo-700 ring-2 ring-indigo-400 ring-offset-2 animate-pulse' 
+                                : 'bg-indigo-600/80 text-white/80 hover:bg-indigo-700 shadow-lg shadow-indigo-100'
+                        }`}
+                    >
+                        Save Configuration {isDirty ? '(Unsaved Changes)' : ''}
                     </button>
                 </div>
             </div>

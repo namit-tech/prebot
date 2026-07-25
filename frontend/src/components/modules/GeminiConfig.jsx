@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useModule } from '../../context/ModuleContext';
 import { FaMicrochip, FaBrain, FaSyncAlt, FaDownload, FaCheckCircle, FaExclamationCircle, FaRobot } from 'react-icons/fa';
+import { GEMINI_LIVE_VOICES, DEFAULT_LIVE_VOICE } from '../../services/geminiLive.service';
 
-const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
+const AIStatusPanel = ({ onRequestSetup, activeTabId }) => {
   const { activeModule, getModuleInstance } = useModule();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -15,6 +16,7 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
   
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
   const [showApiKey, setShowApiKey] = useState(false);
+  const [liveVoice, setLiveVoice] = useState(localStorage.getItem('gemini_live_voice') || DEFAULT_LIVE_VOICE);
 
   const isGemini = effectiveModuleId === 'gemini';
   const isGemma = effectiveModuleId === 'gemma';
@@ -33,7 +35,8 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
         setStatus({
           ollama: ollamaAvailable,
           model: !!modelAvailable,
-          modelName: modelAvailable
+          modelName: modelAvailable,
+          engineType: activeModuleInstance.engineType
         });
       }
 
@@ -45,6 +48,11 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
     } catch (err) {
       console.error('Status check failed:', err);
     }
+  };
+
+  const handleLiveVoiceChange = (voice) => {
+    setLiveVoice(voice);
+    localStorage.setItem('gemini_live_voice', voice);
   };
 
   const handleSaveApiKey = () => {
@@ -108,8 +116,8 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
               {isGemini ? 'Online Mode Active' : 'Private & Offline Mode Active'}
             </p>
             <p className={`text-[10px] leading-relaxed ${isGemini ? 'text-blue-700' : 'text-emerald-700'}`}>
-              {isGemini 
-                ? 'Using Google Gemini for real-time data, latest news, and high-speed research.' 
+              {isGemini
+                ? 'Real-time voice call powered by Gemini Live — speak naturally, interrupt anytime, and Gemini replies in its own voice.'
                 : 'Working locally on this computer. No data ever leaves your device.'}
             </p>
           </div>
@@ -147,39 +155,57 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
                 Don't have a key? <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-500 hover:underline">Get one for free here</a>.
               </p>
             </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-slate-500 uppercase mb-2">Live Voice</label>
+              <select
+                value={liveVoice}
+                onChange={(e) => handleLiveVoiceChange(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              >
+                {GEMINI_LIVE_VOICES.map((v) => (
+                  <option key={v} value={v}>{v}</option>
+                ))}
+              </select>
+              <p className="mt-2 text-[10px] text-slate-400">
+                Gemini speaks in its own natural voice and automatically replies in whatever language you speak. Speech recognition and text-to-speech are handled by Gemini Live — no separate STT/TTS setup needed.
+              </p>
+            </div>
           </div>
         ) : (
           /* OFFLINE CONFIGURATION */
           <>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
-                 <div className="flex items-center gap-2 mb-2">
-                    <FaMicrochip className="text-slate-400 text-xs" />
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">AI Engine</span>
-                 </div>
-                 <div className="flex items-center justify-between">
-                    <span className="text-sm font-bold text-slate-800">Ollama Core</span>
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                       status.ollama ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                    }`}>
-                      {status.ollama ? 'Ready' : 'Stopped'}
-                    </span>
-                 </div>
-              </div>
+               <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl shadow-inner">
+                  <div className="flex items-center gap-2 mb-2">
+                     <FaMicrochip className="text-slate-400 text-xs" />
+                     <span className="text-[10px] font-bold text-slate-500 uppercase">Core AI Engine</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                     <span className="text-sm font-bold text-slate-800">
+                        {status.engineType === 'openai' ? 'LM Studio' : 'Ollama Core'}
+                     </span>
+                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                        status.ollama ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                     }`}>
+                       {status.ollama ? 'Active' : 'Stopped'}
+                     </span>
+                  </div>
+               </div>
 
-              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
+              <div className="p-3 bg-slate-50 border border-slate-100 rounded-xl shadow-inner">
                  <div className="flex items-center gap-2 mb-2">
                     <FaBrain className="text-slate-400 text-xs" />
-                    <span className="text-[10px] font-bold text-slate-500 uppercase">Intelligence Model</span>
+                    <span className="text-[10px] font-bold text-slate-500 uppercase">Neural Intelligence</span>
                  </div>
                  <div className="flex items-center justify-between">
                     <span className="text-sm font-bold text-slate-800">
-                      {status.modelName ? (status.modelName.includes('gemma3:1b') ? 'Gemma 3 1B' : 'Gemma 2B (Legacy)') : 'None'}
+                      {status.modelName ? (status.modelName.includes('gemma3:1b') ? 'Gemma 3 1B' : 'Gemma (Legacy)') : 'Missing'}
                     </span>
                     <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                       status.modelName?.includes('gemma3:1b') ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'
                     }`}>
-                      {status.modelName?.includes('gemma3:1b') ? 'Ready' : 'Fallback'}
+                      {status.modelName?.includes('gemma3:1b') ? 'Verified' : 'Manual Setup'}
                     </span>
                  </div>
               </div>
@@ -189,15 +215,15 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
               <div className="mb-6 border-t border-dashed border-gray-200 pt-6">
                  <div className="flex flex-col sm:flex-row gap-3">
                     <div className="flex-1 p-3 bg-blue-50/50 border border-blue-100 rounded-xl">
-                       <p className="text-[10px] font-bold text-blue-800 mb-1">Upgrade Intelligence</p>
-                       <p className="text-[10px] text-blue-600 mb-3">Install the newer, faster Gemma 3 1B brain.</p>
+                       <p className="text-[10px] font-bold text-blue-800 mb-1">Upgrade Intelligence Engine</p>
+                       <p className="text-[10px] text-blue-600 mb-3">Install the high-speed Gemma 3 1B brain for offline assistant features.</p>
                        <div className="flex gap-2">
                           {status.ollama && (
                             <button 
                               onClick={onRequestSetup}
                               className="flex items-center gap-2 bg-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold text-white hover:bg-blue-700 transition-colors shadow-sm"
                             >
-                              <FaDownload /> Download Gemma 3 1B
+                              <FaDownload /> Setup AI Brain
                             </button>
                           )}
                        </div>
@@ -231,5 +257,5 @@ const GeminiConfig = ({ onRequestSetup, activeTabId }) => {
   );
 };
 
-export default GeminiConfig;
+export default AIStatusPanel;
 

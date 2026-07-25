@@ -2,37 +2,33 @@ import React, { useState, useEffect } from 'react';
 import { useModule } from '../../context/ModuleContext';
 import PredefinedInterface from '../modules/PredefinedInterface';
 import AIBrainInterface from '../modules/AIBrainInterface';
-import GemmaConfig from '../modules/GeminiConfig'; // File renamed but export is GemmaConfig
+import AIStatusPanel from '../modules/GeminiConfig'; // Renamed UI component
 import PredefinedAdmin from '../modules/PredefinedAdmin';
 import SetupWizard from '../common/SetupWizard';
 import OllamaSetupWizard from '../setup/OllamaSetupWizard';
 import WhisperSetupWizard from '../setup/WhisperSetupWizard';
-import { FaClipboardList, FaBrain, FaRobot, FaInfoCircle } from 'react-icons/fa';
+import { FaClipboardList, FaBrain, FaRobot, FaInfoCircle, FaExclamationCircle } from 'react-icons/fa';
 
 const ModuleSelector = () => {
   const { availableModules, activeModule, loadModule, loading, error, clearError } = useModule();
-  const [selectedTab, setSelectedTab] = useState(activeModule || (availableModules.length > 0 ? availableModules[0].id : 'predefined'));
+  const [selectedTab, setSelectedTab] = useState(activeModule || null);
   const [showConfig, setShowConfig] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showOllamaSetup, setShowOllamaSetup] = useState(false);
   const [showWhisperSetup, setShowWhisperSetup] = useState(false);
   const [infoModal, setInfoModal] = useState(null); // 'predefined' or 'gemma'
-  const [setupModel, setSetupModel] = useState(localStorage.getItem('ai_model') || 'gemma3:1b');
+  const [setupModel, setSetupModel] = useState('gemma3:1b'); // Force gemma3:1b as primary target for all clean installs
 
   // Sync selectedTab with activeModule when it changes successfully
   useEffect(() => {
-    if (activeModule) {
-      setSelectedTab(activeModule);
-    }
+    setSelectedTab(activeModule);
   }, [activeModule]);
 
   // Handle initial activeModule if availableModules data arrives later
   useEffect(() => {
     if (activeModule && !selectedTab) {
       setSelectedTab(activeModule);
-    } else if (!activeModule && availableModules.length > 0 && !selectedTab) {
-      setSelectedTab(availableModules[0].id);
     }
   }, [availableModules, activeModule]);
 
@@ -44,6 +40,13 @@ const ModuleSelector = () => {
           setShowWhisperSetup(true);
         }
       });
+    }
+
+    // Check if we should automatically trigger the Ollama setup modal
+    const trigger = localStorage.getItem('trigger_ollama_setup');
+    if (trigger === 'true') {
+      localStorage.removeItem('trigger_ollama_setup');
+      setShowOllamaSetup(true);
     }
   }, []);
 
@@ -125,10 +128,12 @@ const ModuleSelector = () => {
                        }`}
                      >
                        <span className="text-xl">{moduleIcons[module.id] || <FaRobot />}</span>
-                       {module.name}
-                       {activeModule === module.id && (
-                         <span className="ml-2 w-2 h-2 rounded-full bg-blue-500" title="Currently Active"></span>
-                       )}
+                       <div className="flex flex-col items-start leading-tight">
+                           <span>{module.name}</span>
+                           {activeModule === module.id && (
+                               <span className="text-[9px] uppercase tracking-tighter text-blue-400 font-bold">Active Module</span>
+                           )}
+                       </div>
                      </button>
                      <button
                        onClick={(e) => {
@@ -167,8 +172,26 @@ const ModuleSelector = () => {
         )}
 
         {error && (
-          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <p className="text-red-700 text-sm">{error}</p>
+          <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <div className="flex items-start gap-4">
+               <div className="bg-red-100 p-2 rounded-full text-red-600">
+                  <FaExclamationCircle />
+               </div>
+               <div className="flex-1">
+                  <h3 className="text-sm font-bold text-red-900">Module Initialization Failed</h3>
+                  <p className="text-xs text-red-700 mt-1 leading-relaxed">
+                    {error}. {error.includes('Setup required') && 'The required AI engine components are missing on this machine.'}
+                  </p>
+                  {error.includes('Setup required') && (
+                     <button 
+                       onClick={() => setShowOllamaSetup(true)}
+                       className="mt-3 bg-red-600 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg hover:bg-red-700 transition-all uppercase tracking-wider"
+                     >
+                       Begin Automated Installation
+                     </button>
+                  )}
+               </div>
+            </div>
           </div>
         )}
       </div>
@@ -196,7 +219,7 @@ const ModuleSelector = () => {
 
           {showConfig && (selectedTab === 'gemma' || selectedTab === 'gemini') && (
             <div className="mb-6">
-              <GemmaConfig 
+              <AIStatusPanel 
                 onRequestSetup={() => setShowOllamaSetup(true)} 
                 activeTabId={selectedTab}
               />

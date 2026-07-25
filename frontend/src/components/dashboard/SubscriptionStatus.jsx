@@ -7,14 +7,18 @@ const SubscriptionStatus = () => {
   const [expiryDate, setExpiryDate] = useState(null);
   const [timeRemaining, setTimeRemaining] = useState(null);
   const [models, setModels] = useState([]);
+  const [userEmail, setUserEmail] = useState('');
 
   useEffect(() => {
-    // ... useEffect code ...
     const expiry = localStorage.getItem('expiry_date');
     const storedModels = authService.getStoredModels();
+    const userData = authService.getUserData();
     
     setExpiryDate(expiry);
     setModels(storedModels);
+    if (userData && userData.email) {
+      setUserEmail(userData.email);
+    }
 
     // Calculate time remaining
     const updateTimeRemaining = () => {

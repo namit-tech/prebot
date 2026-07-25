@@ -10,7 +10,7 @@ const BUILD_TEMP_DIR = path.join(ROOT_DIR, 'dist_build_temp');
 const PROCESSES_TO_KILL = [
     'prebot.exe',
     'electron.exe',
-    'Offline AI Assistant.exe'
+    'Offline AI Chatbot.exe'
 ];
 
 function log(message) {
@@ -37,9 +37,26 @@ async function startBuild() {
     // Clean DIST folder completely to avoid old version conflicts
     if (fs.existsSync(DIST_DIR)) {
         log(`🗑️ Cleaning old builds in ${DIST_DIR}...`);
-        fs.rmSync(DIST_DIR, { recursive: true, force: true });
+        try {
+            fs.rmSync(DIST_DIR, { recursive: true, force: true });
+        } catch (e) {
+            log(`⚠️ Direct deletion failed: ${e.message}. Trying rename-then-delete...`);
+            const renamePath = `${DIST_DIR}_old_${Date.now()}`;
+            try {
+                fs.renameSync(DIST_DIR, renamePath);
+                log(`✅ Renamed locked folder to ${path.basename(renamePath)}`);
+                // Try to delete the renamed folder in background, but don't let it stop us
+                try { fs.rmSync(renamePath, { recursive: true, force: true }); } catch (err) {}
+            } catch (renameErr) {
+                log(`❌ Critical: Could not clean or rename DIST folder: ${renameErr.message}`);
+                log(`💡 Please manually close any apps or folders using "${DIST_DIR}" and try again.`);
+                process.exit(1);
+            }
+        }
     }
-    fs.mkdirSync(DIST_DIR, { recursive: true });
+    if (!fs.existsSync(DIST_DIR)) {
+        fs.mkdirSync(DIST_DIR, { recursive: true });
+    }
 
     // 1. Prepare Temp Directory (to avoid ruining source files with bytecode)
     if (fs.existsSync(BUILD_TEMP_DIR)) {
@@ -116,7 +133,7 @@ async function startBuild() {
 
             if (!fs.existsSync(downloadDir)) fs.mkdirSync(downloadDir, { recursive: true });
 
-            // Find the setup file. Electron builder naming is: "Offline AI Assistant Setup 1.0.13 x64.exe"
+            // Find the setup file. Electron builder naming is: "Offline AI Chatbot Setup 1.0.13 x64.exe"
             const buildFiles = fs.readdirSync(distOutputPath);
             const setupFile = buildFiles.find(f => f.includes('Setup') && f.endsWith('.exe'));
 

@@ -34,15 +34,17 @@ class ModuleManager {
     }
     
     // Register Offline Brain (Gemma) & Online Brain (Gemini)
-    // Only register these if NOT in Special Edition mode
-    const hasAIAccess = (allowedModels.includes('gemma') || allowedModels.includes('gemini')) && !isSpecialEdition;
+    const hasGemmaAccess = allowedModels.includes('gemma');
+    const hasGeminiAccess = allowedModels.includes('gemini');
 
-    if (hasAIAccess) {
+    if (hasGemmaAccess) {
       if (!this.modules.has('gemma')) {
         const module = new ModuleGemma();
         module.name = 'Offline AI Brain';
         this.modules.set('gemma', module);
       }
+    }
+    if (hasGeminiAccess) {
       if (!this.modules.has('gemini')) {
         const module = new ModuleGemini();
         module.name = 'Cloud AI Brain';
@@ -58,9 +60,11 @@ class ModuleManager {
       finalModules.push('predefined');
     }
 
-    // Include both AI heads if there is any AI access (and not filtered by Special Edition)
-    if (hasAIAccess) {
+    // Include modules based on specific access
+    if (hasGemmaAccess) {
       finalModules.push('gemma');
+    }
+    if (hasGeminiAccess) {
       finalModules.push('gemini');
     }
 
@@ -90,10 +94,8 @@ class ModuleManager {
     // Check if user has access to this module
     const allowedModels = authService.getStoredModels();
     
-    // Smart check for aliases (gemma/gemini)
-    const isAllowed = allowedModels.includes(moduleId) || 
-                     (moduleId === 'gemma' && allowedModels.includes('gemini')) ||
-                     (moduleId === 'gemini' && allowedModels.includes('gemma'));
+    // Check for explicit permission
+    const isAllowed = allowedModels.includes(moduleId);
 
     if (!isAllowed) {
       throw new Error(`Module ${moduleId} not included in your subscription`);
@@ -151,7 +153,7 @@ class ModuleManager {
   /**
    * Process question with active module
    */
-  async processQuestion(question) {
+  async processQuestion(question, onChunk = null) {
     if (!this.activeModule) {
       throw new Error('No active module');
     }
@@ -161,7 +163,7 @@ class ModuleManager {
       throw new Error('Active module not available');
     }
 
-    return await module.processQuestion(question);
+    return await module.processQuestion(question, onChunk);
   }
 
   /**

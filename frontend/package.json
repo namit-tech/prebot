@@ -12,8 +12,11 @@
   },
   "dependencies": {
     "@google/generative-ai": "^0.2.1",
+    "@ricky0123/vad-web": "^0.0.30",
+    "@sapphi-red/web-noise-suppressor": "^0.3.5",
     "axios": "^1.6.2",
     "crypto-js": "^4.2.0",
+    "onnxruntime-web": "^1.27.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^5.5.0",

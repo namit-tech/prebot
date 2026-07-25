@@ -1,8 +1,8 @@
 {
   "name": "prebot",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "main": "loader.js",
-  "description": "PreBot - Offline AI Assistant",
+  "description": "Offline AI Chatbot",
   "scripts": {
     "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install && cd ../electron && npm install",
     "dev:backend": "cd backend && npm run dev",
@@ -16,6 +16,7 @@
     "compile": "node scripts/compile.js",
     "build-win": "npm run compile && node scripts/build-win-robust.js",
     "build:special": "npm run compile && node scripts/build-special.js",
+    "sync": "node scripts/sync-frontend.js",
     "build:msix": "electron-builder --win appx",
     "lint": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src",
     "lint:fix": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src --fix"
@@ -60,12 +61,12 @@
   },
   "build": {
     "asar": false,
-    "compression": "store",
+    "compression": "maximum",
     "asarUnpack": [
       "assets/whisper/**/*"
     ],
-    "appId": "com.prebot.offline",
-    "productName": "Offline AI Assistant",
+    "appId": "OfflineAIAssistant.OfflineAIChatbot",
+    "productName": "Offline AI Chatbot",
     "directories": {
       "output": "dist"
     },
@@ -126,10 +127,10 @@
       "artifactName": "${productName} Portable ${version} ${arch}.${ext}"
     },
     "appx": {
-      "publisher": "CN=Development-Test-Account",
-      "identityName": "PreBot.Offline.AI.Assistant",
-      "publisherDisplayName": "Namit Tech",
-      "displayName": "PreBot AI",
+      "publisher": "CN=1F7F754B-A2B2-4E22-BCD7-7835B96B359C",
+      "identityName": "OfflineAIAssistant.OfflineAIChatbot",
+      "publisherDisplayName": "Offline AI Assistant",
+      "displayName": "Offline AI Chatbot",
       "languages": [
         "en-US"
       ]

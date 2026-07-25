@@ -24,8 +24,8 @@
     "electron-builder": "^24.6.4"
   },
   "build": {
-    "appId": "com.prebot.assistant",
-    "productName": "PreBot",
+    "appId": "OfflineAIAssistant.OfflineAIChatbot",
+    "productName": "Offline AI Chatbot",
     "directories": {
       "output": "../dist-electron"
     },

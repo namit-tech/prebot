@@ -9,7 +9,19 @@ import AISystemInstructions from './AISystemInstructions';
 import VoiceSettings from './VoiceSettings';
 import { isElectron } from '../../utils/electron';
 import DownloadPortal from './DownloadPortal';
+import GeminiLiveSession, { DEFAULT_LIVE_MODEL, DEFAULT_LIVE_VOICE } from '../../services/geminiLive.service';
 import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib, FaHandPaper, FaSignOutAlt, FaMicrochip, FaSdCard, FaExclamationTriangle, FaCheckCircle, FaInfoCircle, FaServer, FaHeadset, FaPhoneAlt, FaEnvelope, FaDownload } from 'react-icons/fa';
+import { RnnoiseWorkletNode, loadRnnoise } from '@sapphi-red/web-noise-suppressor';
+
+// Enhanced constraints applied to every getUserMedia call across all voice capture modes.
+// { ideal: true } lets the browser negotiate the best available hardware processing.
+// channelCount: 1 forces mono — halves processing load and matches Whisper's expected input.
+const AUDIO_CONSTRAINTS = {
+  echoCancellation: { ideal: true },
+  noiseSuppression: { ideal: true },
+  autoGainControl: { ideal: true },
+  channelCount: 1,
+};
 
 const ClientDashboard = () => {
   const { user, logout } = useAuth();
@@ -20,7 +32,7 @@ const ClientDashboard = () => {
   const [isAIBusy, setIsAIBusy] = useState(false);
   const isDesktop = isElectron();
   
-  const { activeModule, loadModule, processQuestion } = useModule(); 
+  const { activeModule, loadModule, processQuestion, getModuleInstance } = useModule();
   const audioCtxRef = useRef(null);
   const watchdogRef = useRef(null);
   const mediaRecorderRef = useRef(null);
@@ -38,6 +50,25 @@ const ClientDashboard = () => {
   const [systemSpecs, setSystemSpecs] = useState(null);
   const [showSpecsModal, setShowSpecsModal] = useState(false);
   const [showSupportTooltip, setShowSupportTooltip] = useState(false);
+  const [isOllamaReady, setIsOllamaReady] = useState(true);
+  const [isPTTRecording, setIsPTTRecording] = useState(false);
+  const pttMediaRecorderRef = useRef(null);
+  const pttChunksRef = useRef([]);
+  const handleInteractionRequestRef = useRef(null);
+  const webSpeechRecognitionRef = useRef(null);
+  const activeModuleRef = useRef(null);
+  const wakeWordCooldownRef = useRef(false);
+  const offlineVADRef = useRef(null);
+  const rnnoiseAudioCtxRef = useRef(null); // keeps RNNoise AudioContext alive while VAD runs
+  const lastAnswerRef = useRef(null);
+  const vadPhaseRef = useRef('wake'); // 'wake' | 'question' — routes onSpeechEnd to correct handler
+  const vadQuestionHandlerRef = useRef(null); // set by startWhisperQuestion, called by VAD onSpeechEnd
+  const vadDeafUntilRef = useRef(0); // epoch ms — speech-end callbacks before this timestamp are discarded
+  const systemAudioPlayRef = useRef(null); // { start, end }
+  const speechStartTimestampRef = useRef(null);
+  const geminiLiveRef = useRef(null);        // active GeminiLiveSession (online real-time mode)
+  const liveActiveRef = useRef(false);       // true while a Live call is running
+  const liveToolVideoRef = useRef(false);    // true while a user-requested content video plays (via tool)
 
   useEffect(() => {
     if (window.electronAPI?.getSystemSpecs) {
@@ -54,6 +85,58 @@ const ClientDashboard = () => {
       localStorage.setItem('ai_system_instructions', ramPersona);
     }
   }, []);
+
+  useEffect(() => {
+    const checkFirstRunOllama = async () => {
+      const models = user?.models || [];
+      const hasGemmaPermission = models.includes('gemma') || user?.role === 'superadmin';
+      
+      if (hasGemmaPermission) {
+        const checked = localStorage.getItem('ollama_first_run_checked');
+        if (!checked) {
+          console.log('[Dashboard] First run offline check — verifying Ollama connection...');
+          if (window.electronAPI && window.electronAPI.ollamaVerify) {
+            try {
+              const verifyResult = await window.electronAPI.ollamaVerify();
+              if (!verifyResult.success || !verifyResult.connected || !verifyResult.models || verifyResult.models.length === 0) {
+                console.log('[Dashboard] Ollama setup is missing or incomplete. Redirecting to setup wizard.');
+                localStorage.setItem('ollama_first_run_checked', 'true');
+                setActiveTab('modules');
+                localStorage.setItem('trigger_ollama_setup', 'true');
+              } else {
+                console.log('[Dashboard] Ollama verification succeeded.');
+                localStorage.setItem('ollama_first_run_checked', 'true');
+              }
+            } catch (e) {
+              console.warn('[Dashboard] Ollama verify error:', e);
+            }
+          }
+        }
+      }
+    };
+    checkFirstRunOllama();
+  }, [user]);
+
+  useEffect(() => {
+    const checkOllamaStatus = async () => {
+      const models = user?.models || [];
+      const hasGemmaPermission = models.includes('gemma') || user?.role === 'superadmin';
+      if (hasGemmaPermission && window.electronAPI?.ollamaVerify) {
+        try {
+          const verifyResult = await window.electronAPI.ollamaVerify();
+          const ready = !!(verifyResult.success && verifyResult.connected && verifyResult.models && verifyResult.models.length > 0);
+          setIsOllamaReady(ready);
+        } catch (e) {
+          setIsOllamaReady(false);
+        }
+      } else {
+        setIsOllamaReady(true);
+      }
+    };
+    checkOllamaStatus();
+    const interval = setInterval(checkOllamaStatus, 10000);
+    return () => clearInterval(interval);
+  }, [user, activeTab]);
 
   const getPerformanceRating = (specs) => {
     if (!specs) return { label: 'Analyzing...', color: 'text-gray-400', bg: 'bg-gray-100', icon: <FaMicrochip /> };
@@ -99,14 +182,25 @@ const ClientDashboard = () => {
         switch (type) {
             case 'start': sentence = "I am listening."; break;
             case 'stop': sentence = "Question captured."; break;
+            case 'cancel': sentence = "Stopped."; break;
             case 'analog_boot': sentence = "System ready."; break;
             case 'tickle': sentence = "Yes? How can I help?"; break;
+            case 'processing': sentence = "Processing."; break;
             case 'process_p1': sentence = "One moment, processing."; break;
             default: return;
         }
 
         window.speechSynthesis.cancel();
         const utter = new SpeechSynthesisUtterance(sentence);
+        utter.onstart = () => {
+            systemAudioPlayRef.current = { start: performance.now(), end: null };
+        };
+        utter.onend = () => {
+            if (systemAudioPlayRef.current) systemAudioPlayRef.current.end = performance.now();
+        };
+        utter.onerror = () => {
+            if (systemAudioPlayRef.current) systemAudioPlayRef.current.end = performance.now();
+        };
         
         // Apply user preferences
         if (voiceSettings.voice) {
@@ -121,8 +215,53 @@ const ClientDashboard = () => {
     } catch (e) { console.error('[VoiceGuide] Error:', e); }
   };
 
+  // Async version for use before starting VAD — resolves only when audio is fully done.
+  // Voice guide: resolves on utter.onend so VAD starts AFTER TTS speech finishes.
+  // Beep: resolves after 1000ms (long enough for the oscillator beep to complete).
+  // Prevents TTS feedback loop where VAD captures its own voice guide.
+  const playBeepAsync = (type) => new Promise((resolve) => {
+    console.log(`[Audio] 🔊 (async) synthesize audio requested: ${type}`);
+    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    if (vs.voiceGuide) {
+      let sentence = '';
+      switch (type) {
+        case 'start': sentence = 'I am listening.'; break;
+        case 'stop': sentence = 'Question captured.'; break;
+        case 'cancel': sentence = 'Stopped.'; break;
+        case 'analog_boot': sentence = 'System ready.'; break;
+        case 'tickle': sentence = 'Yes? How can I help?'; break;
+        case 'process_p1': sentence = 'One moment, processing.'; break;
+        default: resolve(); return;
+      }
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(sentence);
+      utter.onstart = () => {
+          systemAudioPlayRef.current = { start: performance.now(), end: null };
+      };
+      const voice = window.speechSynthesis.getVoices().find(v => v.name === vs.voice);
+      if (voice) utter.voice = voice;
+      utter.pitch = vs.pitch || 1.1;
+      utter.rate = vs.rate || 1.0;
+      utter.volume = vs.volume || 1.0;
+      utter.onend = () => {
+          if (systemAudioPlayRef.current) systemAudioPlayRef.current.end = performance.now();
+          resolve();
+      };
+      utter.onerror = () => {
+          if (systemAudioPlayRef.current) systemAudioPlayRef.current.end = performance.now();
+          resolve();
+      };
+      setTimeout(resolve, 6000); // failsafe — if onend never fires, unblock after 6s
+      window.speechSynthesis.speak(utter);
+    } else {
+      playBeep(type);
+      setTimeout(resolve, 1000); // beep lasts ~500ms; 1s covers it plus a small margin
+    }
+  });
+
   const playBeep = (type) => {
     console.log(`[Audio] 🔊 synthesize audio requested: ${type}`);
+    if (type === 'stop') console.trace('[Audio] stop — call stack');
     
     // If Voice Guide is ON, speak the sentence instead of beeping
     const voiceSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
@@ -130,6 +269,11 @@ const ClientDashboard = () => {
         playVoiceGuide(type);
         return;
     }
+
+    let duration = 200;
+    if (type === 'analog_boot') duration = 500;
+    else if (type === 'tickle') duration = 300;
+    systemAudioPlayRef.current = { start: performance.now(), end: performance.now() + duration };
 
     try {
         if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -196,6 +340,15 @@ const ClientDashboard = () => {
             
             osc.start(now);
             osc.stop(now + 0.3);
+        } else if (type === 'cancel') {
+            // Distinct descending tone for manual cancel/stop
+            osc.frequency.setValueAtTime(330, now); // E4
+            osc.frequency.exponentialRampToValueAtTime(220, now + 0.15); // A3
+            gain.gain.setValueAtTime(0, now);
+            gain.gain.linearRampToValueAtTime(0.15, now + 0.05);
+            gain.gain.linearRampToValueAtTime(0, now + 0.2);
+            osc.start(now);
+            osc.stop(now + 0.2);
         } else {
             // Low Pong (Stop)
             osc.frequency.setValueAtTime(440, now); // A4
@@ -269,12 +422,12 @@ const ClientDashboard = () => {
         if (shouldSpeak) {
             setIsAIBusy(true);
             
-            // Watchdog: Force reset after 15 seconds if it gets stuck
+            // Watchdog: Force reset after 30 seconds if speechSynthesis onend never fires
             if (watchdogRef.current) clearTimeout(watchdogRef.current);
             watchdogRef.current = setTimeout(() => {
                 console.warn('[Dashboard] Watchdog Reset: AI was busy for too long.');
                 resetBusyState('watchdog');
-            }, 15000);
+            }, 30000);
 
             window.speechSynthesis.cancel();
             const isPiperVoice = voiceSettings.voice?.includes('lessac') || voiceSettings.voice?.includes('kusal') || voiceSettings.voice?.startsWith('Piper');
@@ -346,6 +499,340 @@ const ClientDashboard = () => {
         .replace(/\n\s*\n/g, '. ') // Replace double newlines with a period and space for natural pause
         .trim();
   };
+
+  // === MUTE-BUTTON FALLBACK: Amplitude — only used if both Web Speech and VAD are unavailable ===
+  const startMuteButtonAmplitude = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
+      monitorStreamRef.current = stream;
+      const monitorCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const source = monitorCtx.createMediaStreamSource(stream);
+      const analyser = monitorCtx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      let silenceFrames = 0, speechFrames = 0, hasSpoken = false;
+      const UNMUTE_THRESHOLD = 15, MIN_SPEECH_FRAMES = 5;
+      const IDLE_FRAMES_TO_STOP = 50, MUTE_FRAMES_TO_STOP = 10;
+      const monitorStartTime = performance.now();
+      monitorIntervalRef.current = setInterval(() => {
+        if (performance.now() - monitorStartTime < 1500) return;
+        analyser.getByteFrequencyData(dataArray);
+        const avgLevel = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+        if (!isRecordingRef.current) {
+          if (avgLevel > UNMUTE_THRESHOLD) {
+            console.log(`[Dashboard] 🔴 Mic UNMUTED (level: ${avgLevel.toFixed(1)}) — Recording!`);
+            audioChunksRef.current = [];
+            const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            mr.ondataavailable = (e) => { if (e.data.size > 0) audioChunksRef.current.push(e.data); };
+            mr.onstop = async () => {
+              if (monitorIntervalRef.current) clearInterval(monitorIntervalRef.current);
+              monitorIntervalRef.current = null;
+              monitorStreamRef.current?.getTracks().forEach(t => t.stop());
+              monitorStreamRef.current = null;
+              monitorCtx.close();
+              setIsListening(false);
+              setIsMonitoring(false);
+              await transcribeAndSend();
+            };
+            mediaRecorderRef.current = mr;
+            mr.start(250);
+            isRecordingRef.current = true;
+            silenceFrames = 0; speechFrames = 1; hasSpoken = false;
+            setIsListening(true);
+            setIsMonitoring(false);
+          }
+        } else {
+          if (avgLevel > UNMUTE_THRESHOLD) {
+            speechFrames++;
+            silenceFrames = 0;
+            if (speechFrames >= MIN_SPEECH_FRAMES) hasSpoken = true;
+          } else {
+            silenceFrames++;
+            const timeout = hasSpoken ? MUTE_FRAMES_TO_STOP : IDLE_FRAMES_TO_STOP;
+            if (silenceFrames >= timeout) {
+              playBeep('stop');
+              isRecordingRef.current = false;
+              if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+            }
+          }
+        }
+      }, 100);
+    } catch (err) {
+      console.error('[Dashboard] Microphone access denied:', err);
+      alert('Microphone access denied. Please allow microphone access in your system settings.');
+    }
+  };
+
+  // === MUTE-BUTTON ONLINE: Web Speech — stops on isFinal, no silence waiting, no feedback loop ===
+  // retryCount: increments on each recoverable error retry. Resets to 0 on clean restarts
+  // (no-speech timeout, auto-restart after AI response). Caps at 3 to prevent infinite loops
+  // when the network error is persistent (e.g. Electron file:// CSP or no internet).
+  const startMuteButtonWebSpeech = (retryCount = 0) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { startMuteButtonAmplitude(); return; }
+
+    const recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    webSpeechRecognitionRef.current = recognition;
+
+    console.log(`[MuteButton][WebSpeech] 🟢 Listening — speak your question... (attempt ${retryCount + 1})`);
+    let done = false;
+
+    const finish = (transcript) => {
+      if (done) return;
+      done = true;
+      try { recognition.abort(); } catch(e) {}
+      webSpeechRecognitionRef.current = null;
+      setIsMonitoring(false);
+      setIsListening(false);
+      if (!transcript?.trim()) {
+        // No speech captured — keep assistant alive and restart monitoring.
+        // Same behaviour as VAD 15s timeout: user didn't say anything, not a reason to stop.
+        if (handsFreeActiveRef.current) {
+          console.log('[MuteButton][WebSpeech] No speech captured — restarting monitor...');
+          setIsMonitoring(true);
+          setTimeout(() => startMuteButtonWebSpeech(0), 300); // clean restart, reset retry count
+        }
+        return;
+      }
+      playBeep('stop');
+      startThinkingVideo();
+      pipelineStartRef.current = performance.now();
+      handleInteractionRequestRef.current({ requestId: `mb-${Date.now()}`, question: transcript.trim(), inputType: 'voice' });
+    };
+
+    recognition.onresult = (e) => {
+      if (!handsFreeActiveRef.current) return;
+      setIsListening(true);
+      setIsMonitoring(false);
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue;
+        const conf = e.results[i][0].confidence;
+        if (conf < 0.5) continue;
+        const t = e.results[i][0].transcript?.trim();
+        if (!t || t.split(' ').length < 2) continue;
+        finish(t);
+        return;
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.warn(`[MuteButton][WebSpeech] Error: ${e.error} (attempt ${retryCount + 1})`);
+      if (done) return;
+      done = true;
+      try { recognition.abort(); } catch(_) {}
+      webSpeechRecognitionRef.current = null;
+      setIsListening(false);
+
+      // Recoverable errors: retry up to 3 times, then stop.
+      // 'network'       — transient Google STT failure (common in Electron)
+      // 'no-speech'     — WebSpeech built-in silence timeout (~7s)
+      // 'audio-capture' — mic briefly unavailable
+      const retryable = ['network', 'no-speech', 'audio-capture'];
+      if (retryable.includes(e.error) && handsFreeActiveRef.current && retryCount < 3) {
+        console.log(`[MuteButton][WebSpeech] Retrying after '${e.error}' (${retryCount + 1}/3)...`);
+        setIsMonitoring(true);
+        setTimeout(() => startMuteButtonWebSpeech(retryCount + 1), 1500);
+        return;
+      }
+      // Max retries exceeded or permanent error — stop the assistant.
+      if (retryCount >= 3) {
+        console.warn('[MuteButton][WebSpeech] Network error persists after 3 retries — stopping assistant.');
+      }
+      handsFreeActiveRef.current = false;
+      setIsMonitoring(false);
+    };
+
+    recognition.onend = () => { if (!done) finish(null); };
+    recognition.start();
+  };
+
+  // === MUTE-BUTTON OFFLINE: VAD — neural end detection, no amplitude polling, no feedback loop ===
+  // deafMs: how long to ignore speech-end callbacks after starting.
+  //   1500ms — initial button click (just analog_boot to clear)
+  //   2500ms — return after AI response (TTS echo + analog_boot + redemptionFrames all need to clear)
+  //    300ms — timeout restart (nothing is playing, just a brief reset)
+  const startMuteButtonVAD = async (deafMs = 1500) => {
+    // Kill any stale amplitude monitor or WebSpeech instance from a previous cycle
+    // before VAD takes over — prevents phantom 'stop' beeps from lingering listeners.
+    if (monitorIntervalRef.current) {
+      clearInterval(monitorIntervalRef.current);
+      monitorIntervalRef.current = null;
+    }
+    if (webSpeechRecognitionRef.current) {
+      try { webSpeechRecognitionRef.current.abort(); } catch (e) {}
+      webSpeechRecognitionRef.current = null;
+    }
+    try {
+      const vad = await initOfflineVAD(); // reuses existing instance if already warm
+      vadPhaseRef.current = 'question';   // skip wake word, go straight to capture
+
+      const capTimer = setTimeout(() => {
+        if (!handsFreeActiveRef.current) return; // user explicitly stopped — don't restart
+        vadQuestionHandlerRef.current = null;
+        vad.pause();
+        setIsListening(false);
+        // Stay in monitoring — restart the cycle so the assistant keeps waiting.
+        // The user never spoke; this is not a reason to turn off the assistant.
+        console.log('[MuteButton][VAD] No speech in 15s — restarting monitor...');
+        startMuteButtonVAD(300); // nothing playing — minimal deaf period
+      }, 15000);
+
+      vadQuestionHandlerRef.current = async (audio) => {
+        clearTimeout(capTimer);
+        vadQuestionHandlerRef.current = null;
+        vad.pause();
+        setIsListening(false);
+        setIsMonitoring(false);
+
+        if (audio.length < 4000) { console.log('[MuteButton][VAD] Audio too short — restarting monitor...'); startMuteButtonVAD(300); return; }
+
+        playBeep('processing');
+        setIsTranscribing(true);
+        pipelineStartRef.current = performance.now();
+        startThinkingVideo();
+        const wavBytes = float32ToWav(audio);
+        const lang = JSON.parse(localStorage.getItem('voice_settings') || '{}').sttLanguage || 'en';
+
+        try {
+          let result;
+          if (activeModuleRef.current === 'gemini') {
+            const gResult = await transcribeWithGoogleSTT(wavBytes);
+            result = gResult !== null ? gResult : await window.electronAPI.transcribeAudio(Array.from(wavBytes), lang);
+          } else {
+            result = await window.electronAPI.transcribeAudio(Array.from(wavBytes), lang);
+          }
+          const t = ((performance.now() - pipelineStartRef.current) / 1000).toFixed(2);
+          console.log(`[⏱️ TIMER] Mute-button transcription done in ${t}s`);
+          setIsTranscribing(false);
+          if (!handsFreeActiveRef.current) return;
+
+          if (result.success && result.text?.trim()) {
+            const q = result.text.trim();
+            if (/[♪♬]/.test(q) || (q.startsWith('(') && q.endsWith(')')) || (q.startsWith('[') && q.endsWith(']'))) {
+              console.log(`[MuteButton][VAD] ❌ Filtered hallucination: "${q}" — restarting monitor...`);
+              startMuteButtonVAD(300);
+              return;
+            }
+            if (isRepeatRequest(q) && lastAnswerRef.current) {
+              playBeep('tickle');
+              handleDesktopActions(lastAnswerRef.current, 'voice');
+              return;
+            }
+            console.log(`[MuteButton][VAD] ✅ Question: "${q}"`);
+            handleInteractionRequestRef.current({ requestId: `mb-${Date.now()}`, question: q, inputType: 'voice' });
+          } else {
+            console.log('[MuteButton][VAD] Empty transcription — restarting monitor...');
+            startMuteButtonVAD(300);
+          }
+        } catch (err) {
+          setIsTranscribing(false);
+          console.log('[MuteButton][VAD] Transcription error — restarting monitor...');
+          startMuteButtonVAD(300);
+        }
+      };
+
+      // Stamp deaf period: any speech-end that fires before this timestamp is discarded in onSpeechEnd.
+      // VAD starts immediately so no buffered audio is missed, but boot sound captures are thrown away.
+      vadDeafUntilRef.current = performance.now() + deafMs;
+      console.log(`[VAD] Deaf period: ${deafMs}ms`);
+      vad.start();
+    } catch (err) {
+      console.error('[MuteButton][VAD] Init failed — falling back to amplitude:', err);
+      startMuteButtonAmplitude();
+    }
+  };
+
+  // P5: Push-to-talk — hold Ctrl+Space to record, release to send
+  useEffect(() => {
+    const startPTT = async (e) => {
+      if (!(e.ctrlKey && e.code === 'Space')) return;
+      if (pttMediaRecorderRef.current) return; // already recording
+      e.preventDefault();
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
+        pttChunksRef.current = [];
+        const mr = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        mr.ondataavailable = (ev) => { if (ev.data.size > 0) pttChunksRef.current.push(ev.data); };
+        mr.onstop = async () => {
+          stream.getTracks().forEach(t => t.stop());
+          pttMediaRecorderRef.current = null;
+          setIsPTTRecording(false);
+          const blob = new Blob(pttChunksRef.current, { type: 'audio/webm' });
+          pttChunksRef.current = [];
+          if (blob.size < 1000) return;
+          playBeep('process_p1');
+          const txResult = await transcribeBlob(blob);
+          if (txResult.success && txResult.text?.trim()) {
+            const q = txResult.text.trim();
+            console.log(`[PTT] Question: "${q}"`);
+            startThinkingVideo();
+            handleInteractionRequestRef.current({ question: q, inputType: 'voice', requestId: `ptt-${Date.now()}` });
+          }
+        };
+        pttMediaRecorderRef.current = mr;
+        mr.start(250);
+        setIsPTTRecording(true);
+        playBeep('start');
+        console.log('[PTT] Recording started (Ctrl+Space)');
+      } catch (err) {
+        console.error('[PTT] Mic error:', err);
+      }
+    };
+
+    const stopPTT = (e) => {
+      if (e.code !== 'Space') return;
+      if (pttMediaRecorderRef.current?.state === 'recording') {
+        pttMediaRecorderRef.current.stop();
+        playBeep('stop');
+        console.log('[PTT] Recording stopped');
+      }
+    };
+
+    window.addEventListener('keydown', startPTT);
+    window.addEventListener('keyup', stopPTT);
+    return () => {
+      window.removeEventListener('keydown', startPTT);
+      window.removeEventListener('keyup', stopPTT);
+    };
+  }, []);
+
+  // Pre-warm speech synthesis engine — eliminates 300-500ms cold-start on first response
+  useEffect(() => {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    window.speechSynthesis.speak(u);
+  }, []);
+
+  // Re-route wake word when user switches module while hands-free is already running
+  useEffect(() => {
+    // If a Gemini Live call is running, switching away from online mode ends it cleanly
+    // (the offline listener must not start on top of a Live teardown).
+    if (liveActiveRef.current) {
+      stopGeminiLive();
+      return;
+    }
+    if (!handsFreeActiveRef.current) return;
+    if (webSpeechRecognitionRef.current) {
+      try { webSpeechRecognitionRef.current.stop(); } catch (e) {}
+      webSpeechRecognitionRef.current = null;
+    }
+    if (offlineVADRef.current) {
+      try { offlineVADRef.current.destroy(); } catch (e) {}
+      offlineVADRef.current = null;
+    }
+    vadPhaseRef.current = 'wake';
+    vadQuestionHandlerRef.current = null;
+    if (monitorIntervalRef.current) {
+      clearInterval(monitorIntervalRef.current);
+      monitorIntervalRef.current = null;
+    }
+    startHandsFreeListening();
+  }, [activeModule]);
 
   useEffect(() => {
     if (window.electronAPI && window.electronAPI.onExternalAIResponse) {
@@ -453,8 +940,29 @@ const ClientDashboard = () => {
                          
                          if (targetModel) {
                              console.log(`[Dashboard] No predefined match, falling back to AI: ${targetModel}`);
+                             // Try to load the module
                              const loadResult = await loadModule(targetModel);
-                             if (loadResult.success) currentModule = targetModel;
+                          
+                             if (loadResult.success) {
+                                 currentModule = targetModel;
+                             } else {
+                                 console.error(`[Dashboard] Failed to load ${targetModel}:`, loadResult.error);
+                              
+                                 if (loadResult.code === 'REQUIRES_SETUP' || loadResult.suggestWizard) {
+                                    const confirmSetup = window.confirm(
+                                      'AI Brain needs setup to respond.\n\n' +
+                                      'Option A — Install Ollama: Go to "AI Modules" tab and click "Setup AI Core" for an automated install.\n\n' +
+                                      'Option B — LM Studio: Open LM Studio → Local Server tab → load a model → Start Server.\n\n' +
+                                      'Go to AI Modules now?'
+                                    );
+                                    if (confirmSetup) {
+                                       setActiveTab('modules');
+                                    }
+                                 } else {
+                                    alert(`AI Error: ${loadResult.error || 'Failed to initialize AI Brain'}`);
+                                 }
+                                 return; // Abort interaction if AI failed
+                             }
                          } else {
                              console.log('[Dashboard] Predefined mode active but no manual answer or QA provided - skipping processing');
                              setIsAIBusy(false);
@@ -484,19 +992,110 @@ const ClientDashboard = () => {
             }
         }
 
-        // --- 2. If we reach here, we must generate a response using the active AI Module ---
-        await new Promise(r => setTimeout(r, 600));
-        const result = await processQuestion(question).catch(err => {
+        // --- 2. Generate response using the active AI Module ---
+
+        // P1: Build a streaming TTS callback for voice input (Web Speech API only — Piper
+        // receives the full string after streaming completes, handled via handleDesktopActions below)
+        const voiceSettingsSnap = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+        const ttsMode = voiceSettingsSnap.interactionMode || 'adaptive';
+        const shouldStreamSpeak = ((ttsMode === 'always_speak') || (ttsMode === 'adaptive' && inputType === 'voice'))
+            && !(voiceSettingsSnap.voice?.includes('lessac') || voiceSettingsSnap.voice?.includes('kusal') || voiceSettingsSnap.voice?.startsWith('Piper'));
+
+        let streamSentencesEmitted = 0;
+        let streamSentencesEnded = 0;
+        let streamingComplete = false;
+        let streamVideoStarted = false;
+
+        const onStreamFinished = () => {
+            if (pipelineStartRef.current) {
+                const totalTime = ((performance.now() - pipelineStartRef.current) / 1000).toFixed(2);
+                console.log(`[⏱️ TIMER] TTS finished speaking`);
+                console.log(`[⏱️ TIMER] ═══ TOTAL PIPELINE: ${totalTime}s ═══`);
+                pipelineStartRef.current = null;
+            }
+            window.electronAPI?.stopHologramVideo();
+            resetBusyState('tts_finished');
+            autoRestartListening();
+        };
+
+        const streamingTTSChunk = shouldStreamSpeak ? (sentence) => {
+            const cleaned = cleanTextForTTS(sentence);
+            if (!cleaned) return;
+
+            if (!streamVideoStarted) {
+                streamVideoStarted = true;
+                const storedVids = JSON.parse(localStorage.getItem('videos') || '[]');
+                const primaryId = localStorage.getItem('primary_video');
+                const primaryVid = storedVids.find(v => v.id == primaryId);
+                if (primaryVid && window.electronAPI?.playHologramVideo) {
+                    console.log('[Dashboard] 🎬 Switching to PRIMARY video (streaming TTS started)');
+                    window.electronAPI.playHologramVideo(primaryVid);
+                }
+            }
+
+            streamSentencesEmitted++;
+            const utter = new SpeechSynthesisUtterance(cleaned);
+            const allVoices = window.speechSynthesis.getVoices();
+            console.log(`[TTS] Speaking: "${cleaned.slice(0, 60)}" | voices available: ${allVoices.length} | setting: "${voiceSettingsSnap.voice || 'none'}"`);
+            if (voiceSettingsSnap.voice) {
+                const v = allVoices.find(v => v.name === voiceSettingsSnap.voice);
+                if (v) { utter.voice = v; console.log(`[TTS] Using voice: ${v.name}`); }
+                else console.warn(`[TTS] Voice "${voiceSettingsSnap.voice}" not found — using system default`);
+            }
+            utter.pitch = voiceSettingsSnap.pitch || 1.1;
+            utter.rate = voiceSettingsSnap.rate || 1.0;
+            utter.volume = voiceSettingsSnap.volume || 1.0;
+            console.log(`[TTS] pitch=${utter.pitch} rate=${utter.rate} vol=${utter.volume} speaking=${window.speechSynthesis.speaking} pending=${window.speechSynthesis.pending}`);
+            utter.onstart = () => console.log('[TTS] ✅ onstart fired — audio should be playing');
+            utter.onerror = (e) => console.error('[TTS] ❌ onerror:', e.error);
+            utter.onend = () => {
+                console.log('[TTS] onend fired');
+                streamSentencesEnded++;
+                if (streamingComplete && streamSentencesEnded === streamSentencesEmitted) {
+                    onStreamFinished();
+                }
+            };
+            window.speechSynthesis.speak(utter);
+            console.log(`[TTS] After speak(): speaking=${window.speechSynthesis.speaking} pending=${window.speechSynthesis.pending}`);
+        } : null;
+
+        let result = await processQuestion(question, streamingTTSChunk).catch(err => {
             console.error('[Dashboard] Question processing failed:', err);
-            return { success: false };
+            return { success: false, error: err.message };
         });
 
+        // Gemini quota/rate-limit fallback — silently retry with Offline AI Brain
+        if (!result.success && activeModuleRef.current === 'gemini' &&
+            result.error && /quota|429|rate.?limit/i.test(result.error)) {
+            console.warn('[Dashboard] Gemini quota hit — falling back to Offline AI Brain...');
+            const gemmaInst = getModuleInstance('gemma');
+            if (gemmaInst?.isAvailable()) {
+                result = await gemmaInst.processQuestion(question, streamingTTSChunk)
+                    .catch(() => ({ success: false }));
+            }
+        }
+
         const finalAnswer = result.success ? result.answer : "I couldn't process that request.";
+        if (result.success) lastAnswerRef.current = finalAnswer;
         const aiTime = ((performance.now() - aiStartTime) / 1000).toFixed(2);
         console.log(`[⏱️ TIMER] AI response received in ${aiTime}s`);
-        console.log(`[⏱️ TIMER] Starting TTS...`);
 
-        await handleDesktopActions(finalAnswer, inputType || 'text');
+        if (shouldStreamSpeak) {
+            // Mark stream done; cleanup fires from last utterance's onend
+            streamingComplete = true;
+            console.log(`[⏱️ TIMER] Streaming TTS — ${streamSentencesEmitted} sentences queued`);
+            if (streamSentencesEmitted === 0) {
+                // Nothing was spoken (empty response) — clean up immediately
+                onStreamFinished();
+            } else if (streamSentencesEnded === streamSentencesEmitted) {
+                // All utterances already finished before we got here
+                onStreamFinished();
+            }
+            // Otherwise onend of last utterance fires onStreamFinished()
+        } else {
+            console.log(`[⏱️ TIMER] Starting TTS...`);
+            await handleDesktopActions(finalAnswer, inputType || 'text');
+        }
 
         if (window.electronAPI?.sendAIResponse && requestId) {
             window.electronAPI.sendAIResponse({ requestId, answer: finalAnswer, shouldSpeak: true });
@@ -506,12 +1105,237 @@ const ClientDashboard = () => {
         resetBusyState('request_error'); // Reset on error
     }
   };
+  // Keep refs pointed at the latest closure/value every render
+  handleInteractionRequestRef.current = handleInteractionRequest;
+  activeModuleRef.current = activeModule;
+
+  // === ONLINE REAL-TIME MODE: Gemini Live API ===
+  // For the 'gemini' module we skip the whole VAD → Whisper → LLM → speechSynthesis
+  // chain and open one bidirectional Live session: Gemini listens continuously,
+  // understands free-form speech, replies in its own voice, and handles barge-in
+  // (user talks over it → it stops and listens again) — like a phone call.
+  const switchToPrimaryVideo = () => {
+    const storedVids = JSON.parse(localStorage.getItem('videos') || '[]');
+    const primaryId = localStorage.getItem('primary_video');
+    const primaryVid = storedVids.find(v => v.id == primaryId);
+    if (primaryVid && window.electronAPI?.playHologramVideo) {
+      window.electronAPI.playHologramVideo(primaryVid);
+    }
+  };
+
+  // Tools Gemini Live may invoke by voice to actually operate the kiosk.
+  const LIVE_TOOLS = [
+    {
+      name: 'play_hologram_video',
+      description: 'Play a specific hologram/content video on the kiosk display by its name. Use when the user asks to show, play, or watch a particular video (e.g. an intro, a product demo, pricing).',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Name or keywords identifying the video to play, e.g. "intro", "pricing", "demo".' },
+        },
+        required: ['name'],
+      },
+    },
+    {
+      name: 'stop_hologram_video',
+      description: 'Stop any content video currently playing on the display and return to the idle assistant.',
+      parameters: { type: 'object', properties: {} },
+    },
+    {
+      name: 'end_conversation',
+      description: 'End the voice conversation and put the assistant to sleep. Use only when the user clearly says goodbye or that they are finished.',
+      parameters: { type: 'object', properties: {} },
+    },
+  ];
+
+  const playVideoByName = (query) => {
+    const videos = JSON.parse(localStorage.getItem('videos') || '[]');
+    const names = videos.map(v => v.name).filter(Boolean);
+    if (!query) return { success: false, error: 'No video name provided', available: names };
+    const q = query.toLowerCase().trim();
+    const strip = (n) => (n || '').toLowerCase().replace(/\.[^.]+$/, ''); // drop extension
+    const match =
+      videos.find(v => strip(v.name).includes(q)) ||
+      videos.find(v => q.includes(strip(v.name)) && strip(v.name).length > 2);
+    if (match && window.electronAPI?.playHologramVideo) {
+      liveToolVideoRef.current = true; // user is watching this — don't override with the avatar
+      window.electronAPI.playHologramVideo(match);
+      return { success: true, played: match.name };
+    }
+    return { success: false, error: 'No matching video found', available: names };
+  };
+
+  // Execute Gemini's function calls and report results back so it can finish speaking.
+  const handleLiveToolCall = async (functionCalls) => {
+    const responses = [];
+    for (const call of functionCalls) {
+      const { id, name, args } = call;
+      let result;
+      try {
+        if (name === 'play_hologram_video') {
+          result = playVideoByName(args?.name);
+        } else if (name === 'stop_hologram_video') {
+          liveToolVideoRef.current = false;
+          window.electronAPI?.stopHologramVideo?.();
+          result = { success: true };
+        } else if (name === 'end_conversation') {
+          result = { success: true };
+          setTimeout(() => stopGeminiLive(), 2500); // let it say goodbye first
+        } else {
+          result = { success: false, error: `Unknown tool: ${name}` };
+        }
+      } catch (e) {
+        result = { success: false, error: e.message };
+      }
+      responses.push({ id, name, response: { result } });
+    }
+    geminiLiveRef.current?.sendToolResponse(responses);
+  };
+
+  const startGeminiLive = async () => {
+    if (liveActiveRef.current) return;
+
+    const apiKey = localStorage.getItem('gemini_api_key');
+    if (!apiKey) {
+      alert('Please enter your Gemini API Key in Cloud AI Settings first.');
+      return;
+    }
+    if (!navigator.onLine) {
+      alert('Internet connection required for Online (Live) mode.');
+      return;
+    }
+
+    // Build the system instruction from the same sources the REST path used:
+    // persona/instructions + any loaded Foundation Knowledge on the gemini module.
+    const persona = localStorage.getItem('ai_system_instructions')
+      || 'You are a helpful, professional AI assistant. Keep responses concise and conversational.';
+    const geminiInst = getModuleInstance('gemini');
+    let systemInstruction = persona;
+    if (geminiInst && geminiInst.systemContext) {
+      systemInstruction += `\n\nFoundation Knowledge:\n${geminiInst.systemContext}\n\nStrictly answer based on this knowledge if relevant.`;
+    }
+    // Google Search grounding: ON by default so the assistant can answer with current,
+    // real-time web info. It adds a small web round-trip (slightly slower first word);
+    // disable per-key via localStorage.setItem('gemini_live_search','false').
+    const searchEnabled = localStorage.getItem('gemini_live_search') !== 'false';
+
+    // Tell the model what it can DO (function calling) beyond talking.
+    // Ordering matters: the model's PRIMARY job is to answer the user's question. Video control is
+    // a secondary tool used ONLY when the user explicitly asks for a video — never as a fallback
+    // for questions it can't answer directly. Leading with video biased it into replying
+    // "is there a video I can play?" to normal questions, so answering comes first here.
+    const availableVideos = JSON.parse(localStorage.getItem('videos') || '[]').map(v => v.name).filter(Boolean);
+    systemInstruction += `\n\nYOUR ROLE: You are a spoken-conversation assistant. Your main job is to directly answer the user's questions in a short, natural, helpful way.`;
+    if (searchEnabled) {
+      systemInstruction += ` For anything current or real-time — gold/silver rates, prices, news, weather, sports scores, live events — you HAVE web search: use it to look up the answer and state it. Do NOT say you "cannot access real-time information"; you can, so search and answer.`;
+    }
+    systemInstruction += `\n\nTOOLS (use only when relevant, never as a way to dodge a question): play a video with play_hologram_video ONLY when the user explicitly asks to see/show/watch/play a video${availableVideos.length ? ` (available videos: ${availableVideos.join(', ')})` : ''}; stop it with stop_hologram_video; end the session with end_conversation when the user says goodbye. Never offer or suggest playing a video in response to a normal question — just answer the question.`;
+    // Semantic safety net for the acoustic VAD: don't answer a half-heard request.
+    systemInstruction += `\n\nTURN-TAKING: If the user's request sounds cut off, unclear, or incomplete, ask one short clarifying question instead of guessing. Keep replies brief and to the point.`;
+
+    // Turn-taking / barge-in tuning (kiosk-friendly defaults; each overridable via localStorage).
+    const vadNum = (key, def) => { const n = parseInt(localStorage.getItem(key), 10); return Number.isFinite(n) ? n : def; };
+    const vadConfig = {
+      silenceDurationMs: vadNum('gemini_live_silence_ms', 600),     // pause length that ends a turn
+      prefixPaddingMs: vadNum('gemini_live_prefix_ms', 300),        // ignore coughs/clicks
+      startOfSpeechSensitivity: localStorage.getItem('gemini_live_start_sens') || 'START_SENSITIVITY_HIGH', // barge-in eagerness
+      endOfSpeechSensitivity: localStorage.getItem('gemini_live_end_sens') || 'END_SENSITIVITY_HIGH',       // commit decisiveness
+    };
+
+    const pinnedModel = localStorage.getItem('gemini_live_model');
+    const session = new GeminiLiveSession({
+      apiKey,
+      model: pinnedModel || DEFAULT_LIVE_MODEL,
+      autoResolveModel: !pinnedModel, // auto-pick a valid Live model unless the user pinned one
+      voice: localStorage.getItem('gemini_live_voice') || DEFAULT_LIVE_VOICE,
+      vadConfig,
+      // Speed: skip "thinking" latency by default (set gemini_live_no_thinking='false' to keep it).
+      disableThinking: localStorage.getItem('gemini_live_no_thinking') !== 'false',
+      systemInstruction,
+      audioConstraints: AUDIO_CONSTRAINTS,
+      // #1 Function calling — Gemini can operate the kiosk by voice.
+      functionDeclarations: LIVE_TOOLS,
+      // #2 Google Search grounding — ON by default for live web answers (adds a web round-trip).
+      enableSearch: searchEnabled,
+      // #4/#5 Proactive audio + affective dialog: the Developer API (AIza key) rejects these
+      // raw setup fields, so they are OFF unless explicitly opted in via localStorage. They
+      // need the official @google/genai SDK (or a Vertex key) to enable — tracked as follow-up.
+      enableProactiveAudio: localStorage.getItem('gemini_live_proactive') === 'true',
+      enableAffectiveDialog: localStorage.getItem('gemini_live_affective') === 'true',
+      callbacks: {
+        onOpen: () => console.log('[Dashboard][Live] session open'),
+        onListening: () => {
+          setIsAIBusy(false);
+          setIsMonitoring(false);
+          setIsListening(true);
+          // Leave a user-requested content video playing; only clear the avatar.
+          if (!liveToolVideoRef.current) window.electronAPI?.stopHologramVideo?.();
+        },
+        onModelAudioStart: () => {
+          setIsListening(false);
+          setIsAIBusy(true);
+          // Don't override a video the user asked to watch with the talking avatar.
+          if (!liveToolVideoRef.current) switchToPrimaryVideo();
+        },
+        onUserTranscript: (t) => console.log(`[Dashboard][Live] 🗣️ user: "${t}"`),
+        onModelTranscript: (t) => console.log(`[Dashboard][Live] 🤖 model: "${t}"`),
+        onToolCall: handleLiveToolCall,
+        onInterrupted: () => {
+          console.log('[Dashboard][Live] ⛔ barge-in — user interrupted');
+          setIsAIBusy(false);
+          setIsListening(true);
+          if (!liveToolVideoRef.current) window.electronAPI?.stopHologramVideo?.();
+        },
+        onTurnComplete: ({ answer, question }) => {
+          if (answer) lastAnswerRef.current = answer;
+          if (window.electronAPI?.sendAIResponse) {
+            window.electronAPI.sendAIResponse({ requestId: `live-${Date.now()}`, answer, shouldSpeak: false });
+          }
+        },
+        onError: (msg) => {
+          console.error('[Dashboard][Live] error:', msg);
+          alert(`Live mode error: ${msg}`);
+          stopGeminiLive();
+        },
+        onClose: () => stopGeminiLive(),
+      },
+    });
+
+    geminiLiveRef.current = session;
+    liveActiveRef.current = true;
+    handsFreeActiveRef.current = true;
+    setIsMonitoring(true);
+    playBeep('start');
+
+    const ok = await session.start();
+    if (!ok) {
+      stopGeminiLive();
+    }
+  };
+
+  const stopGeminiLive = () => {
+    if (geminiLiveRef.current) {
+      try { geminiLiveRef.current.stop(); } catch (e) {}
+      geminiLiveRef.current = null;
+    }
+    liveActiveRef.current = false;
+    liveToolVideoRef.current = false;
+    handsFreeActiveRef.current = false;
+    setIsListening(false);
+    setIsMonitoring(false);
+    setIsAIBusy(false);
+    window.electronAPI?.stopHologramVideo?.();
+  };
 
   // === MUTE-BUTTON TRIGGERED VOICE ASSISTANT ===
   // Flow: Click Voice → Monitoring (green) → Unmute mic → Recording (red) → Mute mic → Transcribe (amber) → AI responds
-  
+
   // Auto-restart: use correct mode
-  const autoRestartListening = () => {
+  const autoRestartListening = async () => {
+    // Gemini Live is always-on full-duplex — it manages its own listening. Never start
+    // the offline VAD/mic loop on top of a running Live session.
+    if (liveActiveRef.current) return;
+
     const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
     
     // If the mic wasn't actively listening when this response was triggered 
@@ -535,17 +1359,25 @@ const ClientDashboard = () => {
         startQuestionRecording(true);
       }
     } else {
-      // PERSISTENT MONITORING: If we are in Mute-Trigger mode and the session is still active
+      // PERSISTENT MONITORING: restart directly — never go through toggleVoiceAssistant() here
+      // because the toggle reads stale React state and would accidentally STOP instead of START.
       console.log('[Dashboard] Returning to Mute-Monitoring state...');
-      if (isMonitoring || isListening) {
-         // Already in a voice state, just reset
-         setIsMonitoring(true);
-         setIsListening(false);
-      } else {
-         // Trigger the monitor again
-         toggleVoiceAssistant();
-      }
+      handsFreeActiveRef.current = true;
+      setIsMonitoring(true);
+      setIsListening(false);
+      // Await TTS/beep completion before starting VAD.
+      // With Voice Guide ON, "System ready." plays via TTS (~1s) — starting VAD during TTS
+      // causes feedback: VAD picks up the voice guide, Whisper transcribes it, infinite loop.
+      await playBeepAsync('analog_boot');
+      if (!handsFreeActiveRef.current) return; // user pressed stop during the audio
+      startMuteButtonVAD(2000); // 2s: analog_boot echo + TTS reverb + room decay need to clear
     }
+  };
+
+  // Detect "speak again" / "repeat" type phrases so follow-up can re-speak last answer
+  const isRepeatRequest = (text) => {
+    const t = text.toLowerCase().trim();
+    return /speak again|say again|say that again|repeat|didn.t hear|what did you say|one more time|can you say|louder/.test(t);
   };
 
   // Strip punctuation and normalize text for matching
@@ -596,9 +1428,7 @@ const ClientDashboard = () => {
   // isFollowUp enforces a strict 5-second timeout where the recording fails and goes back to sleep
   const startAudioCapture = async (phase, onComplete, isFollowUp = false) => {
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
       handsFreeStreamRef.current = stream;
 
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -633,8 +1463,8 @@ const ClientDashboard = () => {
       const audioCaptureStartTime = performance.now();
 
       monitorIntervalRef.current = setInterval(() => {
-        // Enforce an aggressive 3500ms DEAF PERIOD so the microphone completely ignores the Wake Word mechanical beep
-        if (performance.now() - audioCaptureStartTime < 3000) return;
+        // Enforce a DEAF PERIOD so the microphone ignores the wake word beep
+        if (performance.now() - audioCaptureStartTime < 1500) return;
 
         analyser.getByteFrequencyData(dataArray);
         const avgLevel = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
@@ -722,6 +1552,83 @@ const ClientDashboard = () => {
     }
   };
 
+  // Convert VAD's Float32Array (16kHz mono) directly to 16-bit PCM WAV bytes
+  const float32ToWav = (samples) => {
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const v = new DataView(buf);
+    const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + samples.length * 2, true);
+    w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+    v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, 16000, true); v.setUint32(28, 32000, true);
+    v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+    w(36, 'data'); v.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      v.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    }
+    return new Uint8Array(buf);
+  };
+
+  // Google Cloud STT REST API — used for Cloud AI Brain (Gemini) mode.
+  // Returns { success, text } on success, { success: false, error } on failure, null if no key (falls back to Whisper).
+  const transcribeWithGoogleSTT = async (wavBytes) => {
+    const apiKey = localStorage.getItem('google_stt_api_key');
+    if (!apiKey) return null; // no key configured — caller falls back to Whisper
+
+    // Build base64 without String.fromCharCode.apply (stack-safe for large audio)
+    let binary = '';
+    for (let i = 0; i < wavBytes.length; i++) binary += String.fromCharCode(wavBytes[i]);
+    const base64 = btoa(binary);
+
+    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    const rawLang = vs.sttLanguage || 'en';
+    const langMap = { en: 'en-IN', hi: 'hi-IN', ta: 'ta-IN', te: 'te-IN', mr: 'mr-IN', bn: 'bn-IN' };
+    const languageCode = langMap[rawLang] || rawLang;
+
+    try {
+      const t0 = performance.now();
+      const response = await fetch(
+        `https://speech.googleapis.com/v1/speech:recognize?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            config: {
+              encoding: 'LINEAR16',
+              sampleRateHertz: 16000,
+              languageCode,
+              model: 'latest_long',
+              enableAutomaticPunctuation: true,
+              useEnhanced: true,
+            },
+            audio: { content: base64 }
+          })
+        }
+      );
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        const msg = err?.error?.message || `HTTP ${response.status}`;
+        console.error('[GoogleSTT] API error:', msg);
+        return { success: false, error: msg };
+      }
+
+      const data = await response.json();
+      const t = ((performance.now() - t0) / 1000).toFixed(2);
+      console.log(`[⏱️ TIMER] Google STT done in ${t}s`);
+
+      if (data.results?.length > 0) {
+        const text = data.results.map(r => r.alternatives[0].transcript).join(' ').trim();
+        return { success: true, text };
+      }
+      return { success: false, error: 'No speech detected' };
+    } catch (err) {
+      console.error('[GoogleSTT] Network error:', err);
+      return { success: false, error: err.message };
+    }
+  };
+
   // Shared: transcribe an audio blob via Whisper
   const transcribeBlob = async (audioBlob) => {
     const arrayBuffer = await audioBlob.arrayBuffer();
@@ -735,17 +1642,248 @@ const ClientDashboard = () => {
     return result;
   };
 
-  // === PHASE 1: Listen for wake word ===
-  const startHandsFreeListening = () => {
-    if (isAIBusy || isTranscribing) return;
+  // === PHASE 1 (ONLINE): Web Speech API wake word — instant, <200ms, no local compute ===
+  const startWebSpeechWakeWord = (wakeWord) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      console.warn('[HandsFree-P1] Web Speech API not available — falling back to Whisper');
+      startWhisperWakeWord(wakeWord);
+      return;
+    }
 
-    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
-    const wakeWord = (vs.wakeWord || 'hello prebot').toLowerCase().trim();
+    const recognition = new SR();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+    webSpeechRecognitionRef.current = recognition;
 
-    handsFreeActiveRef.current = true; // Mark hands-free as active
-    playBeep('analog_boot'); // Completely different mechanical sweep sound
-    console.log(`[HandsFree-P1] 🎙️ Waiting for wake word: "${wakeWord}"...`);
+    setIsWakeWordListening(true);
+    console.log(`[HandsFree-P1][WebSpeech] 🎙️ Waiting for wake word: "${wakeWord}"...`);
 
+    recognition.onresult = (e) => {
+      if (!handsFreeActiveRef.current) return;
+      if (wakeWordCooldownRef.current) return; // prevent double-trigger
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue; // only act on final results — no partial-word false triggers
+        const confidence = e.results[i][0].confidence;
+        if (confidence < 0.65) continue; // ignore low-confidence crowd noise
+        const transcript = e.results[i][0].transcript.toLowerCase().trim();
+        console.log(`[HandsFree-P1][WebSpeech] Heard (conf:${confidence.toFixed(2)}): "${transcript}"`);
+        // Exact substring match — Web Speech is accurate, no fuzzy needed
+        const cleanT = cleanForMatch(transcript);
+        const cleanW = cleanForMatch(wakeWord);
+        if (cleanT.includes(cleanW)) {
+          console.log('[HandsFree-P1][WebSpeech] ✅ Wake word MATCHED!');
+          wakeWordCooldownRef.current = true;
+          setTimeout(() => { wakeWordCooldownRef.current = false; }, 3000);
+          recognition.stop();
+          webSpeechRecognitionRef.current = null;
+          setIsWakeWordListening(false);
+          playBeepAsync('tickle').then(() => {
+            if (handsFreeActiveRef.current) startQuestionRecording();
+          });
+        }
+      }
+    };
+
+    recognition.onerror = (e) => {
+      console.warn(`[HandsFree-P1][WebSpeech] Error: ${e.error}`);
+      webSpeechRecognitionRef.current = null;
+      if (handsFreeActiveRef.current) startHandsFreeListening();
+    };
+
+    recognition.onend = () => {
+      // Auto-restart if not cancelled (browser stops recognition after ~60s of silence)
+      webSpeechRecognitionRef.current = null;
+      if (handsFreeActiveRef.current) {
+        console.log('[HandsFree-P1][WebSpeech] Session ended — restarting...');
+        startHandsFreeListening();
+      }
+    };
+
+    recognition.start();
+  };
+
+  // === SHARED VAD FACTORY ===
+  // Creates one MicVAD instance with full phase-routing callbacks.
+  // Both hands-free (P1 wake → P2 question cycle) and mute-button (direct P2) share this instance.
+  // vadPhaseRef controls which path onSpeechEnd takes at runtime.
+  const initOfflineVAD = async () => {
+    if (offlineVADRef.current) return offlineVADRef.current;
+
+    // Resolve vad/ relative to index.html (window.location), NOT to the JS bundle in assets/.
+    // When Electron loads file:///...prebot/index.html, ./vad/ must be prebot/vad/, not prebot/assets/vad/.
+    const vadBase = new URL('./vad/', window.location.href).href;
+    console.log('[VAD] debug > initialising vad at', vadBase);
+
+    const ortModule = await import('onnxruntime-web');
+    ortModule.env.wasm.wasmPaths = vadBase;
+    ortModule.env.wasm.numThreads = 1;
+    const { MicVAD } = await import('@ricky0123/vad-web');
+
+    const vad = await MicVAD.new({
+      baseAssetPath: vadBase,
+      onnxWASMBasePath: vadBase,
+      positiveSpeechThreshold: 0.85,  // High: ignore crowd murmur, only trigger on clear presenter voice
+      negativeSpeechThreshold: 0.80,  // Aggressive cutoff: room chatter won't keep recording alive
+      preSpeechPadFrames: 10,
+      redemptionFrames: 6,            // ~576ms — fast end-of-speech; prevents crowd noise from extending capture
+
+      // Provide our own stream so we can apply RNNoise before VAD processes audio.
+      // Falls back to raw stream if RNNoise WASM fails to load.
+      getStream: async () => {
+        const rawStream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS });
+        try {
+          // Resolve rnnoise/ relative to index.html, same pattern as vadBase above.
+          const rnnoiseBase = new URL('./rnnoise/', window.location.href).href;
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          rnnoiseAudioCtxRef.current = audioCtx;
+          const rnnoiseWasmBinary = await loadRnnoise({ url: rnnoiseBase + 'rnnoise.wasm', simdUrl: rnnoiseBase + 'rnnoise.wasm' });
+          await audioCtx.audioWorklet.addModule(rnnoiseBase + 'workletProcessor.js');
+          const source = audioCtx.createMediaStreamSource(rawStream);
+          const rnnoise = new RnnoiseWorkletNode(audioCtx, { wasmBinary: rnnoiseWasmBinary, maxChannels: 1 });
+          const destination = audioCtx.createMediaStreamDestination();
+          source.connect(rnnoise);
+          rnnoise.connect(destination);
+          console.log('[VAD] ✅ RNNoise neural noise suppression active');
+          return destination.stream;
+        } catch (err) {
+          console.warn('[VAD] RNNoise init failed, using raw stream:', err);
+          return rawStream;
+        }
+      },
+
+      onSpeechStart: () => {
+        if (!handsFreeActiveRef.current) return;
+        speechStartTimestampRef.current = performance.now();
+        // Always show RED "AI IS LISTENING" when speech is detected in question phase.
+        // TTS is now fully awaited (playBeepAsync) before VAD starts, so there is no system
+        // audio still playing when this fires — no risk of showing listening state for our own voice.
+        // The deaf period still gates onSpeechEnd (capture), so a brief echo won't get transcribed.
+        if (vadPhaseRef.current === 'question') {
+          setIsListening(true);
+          setIsMonitoring(false);
+          setIsWakeWordListening(false);
+          playBeep('start'); // Audible cue: beep or "I am listening" (voice guide)
+        }
+        console.log(`[VAD-P${vadPhaseRef.current === 'wake' ? '1' : '2'}] 🔴 Speech detected`);
+      },
+
+      onSpeechEnd: async (audio) => {
+        if (!handsFreeActiveRef.current) return;
+
+        // Route to question handler (hands-free P2 or mute-button)
+        if (vadPhaseRef.current === 'question') {
+          // Deaf period: discard audio captured right after system plays a sound.
+          // VAD continues running; it will fire again when real speech arrives.
+          if (performance.now() < vadDeafUntilRef.current) {
+            console.log('[VAD] Deaf period — discarding system sound capture');
+            return;
+          }
+
+          // Digital Blanking of System Audio Feedback
+          if (systemAudioPlayRef.current) {
+            const speechEndTimestamp = performance.now();
+            const totalDurationMs = audio.length / 16;
+            const recordingStartTime = speechEndTimestamp - totalDurationMs;
+            const playStart = systemAudioPlayRef.current.start;
+            const playEnd = systemAudioPlayRef.current.end || speechEndTimestamp;
+
+            if (playEnd > recordingStartTime && playStart < speechEndTimestamp) {
+              const overlapStartMs = Math.max(0, playStart - recordingStartTime);
+              const overlapEndMs = Math.min(totalDurationMs, playEnd - recordingStartTime);
+              const startIndex = Math.floor(overlapStartMs * 16);
+              const endIndex = Math.ceil(overlapEndMs * 16);
+
+              console.log(`[VAD] Blanking system audio feedback: ${overlapStartMs.toFixed(0)}ms to ${overlapEndMs.toFixed(0)}ms (${startIndex} to ${endIndex} samples)`);
+              for (let i = startIndex; i < endIndex; i++) {
+                if (i >= 0 && i < audio.length) {
+                  audio[i] = 0.0;
+                }
+              }
+            }
+            systemAudioPlayRef.current = null;
+          }
+
+          if (vadQuestionHandlerRef.current) vadQuestionHandlerRef.current(audio);
+          return;
+        }
+
+        // Phase 1: wake word check (reads wake word from settings at call time)
+        if (audio.length < 8000) { if (handsFreeActiveRef.current) vad.start(); return; }
+
+        vad.pause();
+        const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+        const wakeWord = (vs.wakeWord || 'hello ram').toLowerCase().trim();
+        const wavBytes = float32ToWav(audio);
+        setIsTranscribing(true);
+        const t0 = performance.now();
+
+        try {
+          const result = await window.electronAPI.transcribeAudio(Array.from(wavBytes), 'en');
+          console.log(`[⏱️ TIMER] Wake word check done in ${((performance.now() - t0) / 1000).toFixed(2)}s`);
+          setIsTranscribing(false);
+
+          if (result.success && result.text?.trim()) {
+            const fullText = result.text.trim();
+            if (/[♪♬]/.test(fullText) ||
+                (fullText.startsWith('(') && fullText.endsWith(')')) ||
+                (fullText.startsWith('[') && fullText.endsWith(']'))) {
+              console.log(`[VAD-P1] ❌ Hallucination: "${fullText}"`);
+              if (handsFreeActiveRef.current) vad.start();
+              return;
+            }
+            console.log(`[VAD-P1] Heard: "${fullText}"`);
+            if (fuzzyMatch(fullText, wakeWord)) {
+              console.log('[VAD-P1] ✅ Wake word MATCHED!');
+              setIsWakeWordListening(false);
+              playBeepAsync('tickle').then(() => {
+                if (handsFreeActiveRef.current) startQuestionRecording();
+              });
+            } else {
+              console.log('[VAD-P1] ❌ Not wake word — resuming...');
+              if (handsFreeActiveRef.current) vad.start();
+            }
+          } else {
+            if (handsFreeActiveRef.current) vad.start();
+          }
+        } catch (err) {
+          setIsTranscribing(false);
+          if (handsFreeActiveRef.current) vad.start();
+        }
+      },
+
+      onVADMisfire: () => console.log('[VAD] Misfire — noise spike ignored')
+    });
+
+    offlineVADRef.current = vad;
+    return vad;
+  };
+
+  // === PHASE 1 (OFFLINE): Silero VAD wake word — delegates to initOfflineVAD ===
+  const startWhisperWakeWord = async (wakeWord) => {
+    if (offlineVADRef.current) {
+      vadPhaseRef.current = 'wake';
+      offlineVADRef.current.start();
+      setIsWakeWordListening(true);
+      return;
+    }
+    console.log(`[HandsFree-P1][VAD] 🎙️ Initialising VAD for wake word: "${wakeWord}"...`);
+    setIsWakeWordListening(true);
+    try {
+      await initOfflineVAD();
+      vadPhaseRef.current = 'wake';
+      offlineVADRef.current.start();
+    } catch (err) {
+      console.error('[HandsFree-P1][VAD] Failed — falling back to amplitude:', err);
+      setIsWakeWordListening(false);
+      startAmplitudeWakeWord(wakeWord);
+    }
+  };
+
+  // === PHASE 1 (OFFLINE FALLBACK): Amplitude-based wake word (used if VAD fails) ===
+  const startAmplitudeWakeWord = (wakeWord) => {
+    console.log(`[HandsFree-P1][Amp] 🎙️ Waiting for wake word: "${wakeWord}"...`);
     startAudioCapture(1, async (audioBlob) => {
       // Check cancellation flag
       if (!handsFreeActiveRef.current) {
@@ -780,13 +1918,24 @@ const ClientDashboard = () => {
 
         if (result.success && result.text && result.text.trim()) {
           const fullText = result.text.trim();
+
+          // Filter Whisper hallucinations: music notes, bracketed noise labels
+          if (/[♪♬]/.test(fullText) ||
+              (fullText.startsWith('(') && fullText.endsWith(')')) ||
+              (fullText.startsWith('[') && fullText.endsWith(']'))) {
+            console.log(`[HandsFree-P1] ❌ Filtered hallucination: "${fullText}"`);
+            if (handsFreeActiveRef.current) startHandsFreeListening();
+            return;
+          }
+
           console.log(`[HandsFree-P1] Heard: "${fullText}"`);
 
           const isMatch = fuzzyMatch(fullText, wakeWord);
           if (isMatch) {
             console.log(`[HandsFree-P1] ✅ Wake word MATCHED! Starting Phase 2 (question recording)...`);
-            playBeep('tickle'); // Arpeggio confirmation!
-            setTimeout(() => startQuestionRecording(), 600); // Give the tickle arpeggio time to play before starting P2
+            playBeepAsync('tickle').then(() => {
+              if (handsFreeActiveRef.current) startQuestionRecording();
+            });
           } else {
             console.log(`[HandsFree-P1] ❌ Not wake word — Ignoring & restarting...`);
             if (handsFreeActiveRef.current) startHandsFreeListening();
@@ -803,89 +1952,263 @@ const ClientDashboard = () => {
     });
   };
 
-  // === PHASE 2: Record the question ===
-  const startQuestionRecording = (isFollowUp = false) => {
-    if (isFollowUp) {
-      console.log(`[HandsFree-P2] 🎤 Follow-Up Window Open! (5 seconds to speak)`);
-      // Optional: Play a tiny double-blip so the user knows they can speak immediately
-      playBeep('process_p1');
+  // === PHASE 1 ROUTER: pick Web Speech (online/Gemini) or Whisper (offline/Gemma) ===
+  const startHandsFreeListening = async () => {
+    if (isAIBusy || isTranscribing) return;
+
+    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    const wakeWord = (vs.wakeWord || 'hello ram').toLowerCase().trim();
+
+    handsFreeActiveRef.current = true;
+    await playBeepAsync('analog_boot');
+    if (!handsFreeActiveRef.current) return;
+
+    if (activeModuleRef.current === 'gemini') {
+      // Online mode — use Web Speech API (instant, no local compute)
+      startWebSpeechWakeWord(wakeWord);
     } else {
-      console.log(`[HandsFree-P2] 🎤 Ready for question — speak now...`);
+      // Offline mode — use Whisper (works without internet)
+      startWhisperWakeWord(wakeWord);
     }
+  };
 
-    startAudioCapture(2, async (audioBlob) => {
-      // Check cancellation flag
-      if (!handsFreeActiveRef.current) {
-        console.log('[HandsFree-P2] Cancelled, stopping.');
-        setIsTranscribing(false);
+  // === PHASE 2 (ONLINE): Web Speech API question — instant, <1s, no Whisper ===
+  const startWebSpeechQuestion = (isFollowUp = false) => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { startWhisperQuestion(isFollowUp); return; }
+
+    const recognition = new SR();
+    recognition.continuous = false;
+    recognition.interimResults = true; // act immediately on isFinal — don't wait for browser silence detection
+    recognition.lang = 'en-US';
+    recognition.maxAlternatives = 1;
+
+    setIsListening(true);
+    setIsWakeWordListening(false);
+    console.log(`[HandsFree-P2][WebSpeech] 🎤 ${isFollowUp ? 'Follow-Up' : 'Ready'} — speak your question...`);
+
+    let answered = false;
+
+    const finish = (question) => {
+      if (answered) return;
+      answered = true;
+      try { recognition.abort(); } catch (e) {}
+      setIsListening(false);
+      if (!question || !question.trim()) {
+        console.log('[HandsFree-P2][WebSpeech] No question — back to wake word.');
+        if (handsFreeActiveRef.current) startHandsFreeListening();
         return;
       }
-
-      if (audioBlob.size < 1000) {
-        if (isFollowUp) {
-           console.log('[HandsFree-P2] 5s Follow-Up Window Closed. Going back to sleep...');
-           // Timeout reached: Go back to P1 (Wake Word)
-           if (handsFreeActiveRef.current) startHandsFreeListening();
-        } else {
-           console.log('[HandsFree-P2] Too short, back to wake word...');
-           if (handsFreeActiveRef.current) autoRestartListening();
-        }
+      if (isRepeatRequest(question) && lastAnswerRef.current) {
+        console.log(`[HandsFree-P2][WebSpeech] 🔁 Repeat request — re-speaking last answer`);
+        playBeep('tickle');
+        handleDesktopActions(lastAnswerRef.current, 'voice');
         return;
       }
-
-      console.log(`[HandsFree-P2] Question captured: ${audioBlob.size} bytes — Transcribing...`);
+      console.log(`[HandsFree-P2][WebSpeech] ✅ Question: "${question}" — Sending to AI...`);
       pipelineStartRef.current = performance.now();
-      console.log(`[⏱️ TIMER] Pipeline started — Transcribing question...`);
-      startThinkingVideo(); // Trigger hologram video early during transcription!
-      setIsTranscribing(true);
+      startThinkingVideo();
+      handleInteractionRequest({ requestId: `hf-voice-${Date.now()}`, question, inputType: 'voice' });
+    };
 
-      try {
-        const result = await transcribeBlob(audioBlob);
+    recognition.onresult = (e) => {
+      if (!handsFreeActiveRef.current) return;
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (!e.results[i].isFinal) continue; // act on final — skip interim
+        const confidence = e.results[i][0].confidence;
+        if (confidence < 0.5) continue; // filter background noise
+        const transcript = e.results[i][0].transcript?.trim();
+        if (!transcript || transcript.split(' ').length < 2) continue; // need at least 2 words
+        playBeep('stop');
+        finish(transcript);
+        return;
+      }
+    };
 
-        // Check cancellation AFTER transcription completes
-        if (!handsFreeActiveRef.current) {
-          console.log('[HandsFree-P2] Cancelled during transcription, discarding result.');
-          setIsTranscribing(false);
+    recognition.onerror = (e) => {
+      console.warn(`[HandsFree-P2][WebSpeech] Error: ${e.error}`);
+      if (!answered) { answered = true; setIsListening(false); if (handsFreeActiveRef.current) startHandsFreeListening(); }
+    };
+
+    // Timeout: follow-up 6s, normal 10s — then give up
+    const timeout = setTimeout(() => finish(null), isFollowUp ? 6000 : 10000);
+    recognition.onend = () => { clearTimeout(timeout); if (!answered) finish(null); };
+
+    recognition.start();
+  };
+
+  // === PHASE 2 (OFFLINE): VAD-based question capture ===
+  // Reuses the live VAD instance from Phase 1 — no reinitialisation, no amplitude polling.
+  // vadPhaseRef switches to 'question' so onSpeechEnd routes here instead of wake word check.
+  const startWhisperQuestion = (isFollowUp = false) => {
+    const vad = offlineVADRef.current;
+
+    if (vad) {
+      console.log(`[HandsFree-P2][VAD] 🎤 ${isFollowUp ? 'Follow-Up' : 'Ready'} — speak your question...`);
+      setIsListening(true);
+      setIsWakeWordListening(false);
+      vadPhaseRef.current = 'question';
+
+      // Hard cap: if ambient noise prevents onSpeechEnd from ever firing, give up after timeout
+      const capTimer = setTimeout(() => {
+        if (!handsFreeActiveRef.current) return;
+        vadQuestionHandlerRef.current = null;
+        vad.pause();
+        setIsListening(false);
+        console.log('[HandsFree-P2][VAD] ⏹️ Timeout — no question captured. Back to wake word.');
+        if (handsFreeActiveRef.current) startHandsFreeListening();
+      }, isFollowUp ? 6000 : 10000);
+
+      vadQuestionHandlerRef.current = async (audio) => {
+        clearTimeout(capTimer);
+        vadQuestionHandlerRef.current = null;
+        vad.pause();
+        setIsListening(false);
+
+        if (audio.length < 4000) { // < 0.25s — not a real question
+          console.log('[HandsFree-P2][VAD] Too short — back to wake word.');
+          vadPhaseRef.current = 'wake';
+          if (handsFreeActiveRef.current) startHandsFreeListening();
           return;
         }
 
-        const transcribeTime = ((performance.now() - pipelineStartRef.current) / 1000).toFixed(2);
-        console.log(`[⏱️ TIMER] Question transcription done in ${transcribeTime}s`);
+        pipelineStartRef.current = performance.now();
+        console.log('[⏱️ TIMER] Pipeline started — transcribing question...');
+        startThinkingVideo();
+        setIsTranscribing(true);
+        const wavBytes = float32ToWav(audio);
+
+        try {
+          const currentSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+          const lang = currentSettings.sttLanguage || 'en';
+          let result;
+          if (activeModuleRef.current === 'gemini') {
+            const gResult = await transcribeWithGoogleSTT(wavBytes);
+            result = gResult !== null ? gResult : await window.electronAPI.transcribeAudio(Array.from(wavBytes), lang);
+          } else {
+            result = await window.electronAPI.transcribeAudio(Array.from(wavBytes), lang);
+          }
+          const transcribeTime = ((performance.now() - pipelineStartRef.current) / 1000).toFixed(2);
+          console.log(`[⏱️ TIMER] Question transcription done in ${transcribeTime}s`);
+          setIsTranscribing(false);
+
+          if (!handsFreeActiveRef.current) return;
+
+          if (result.success && result.text?.trim()) {
+            const question = result.text.trim();
+
+            if (/[♪♬]/.test(question) ||
+                (question.startsWith('(') && question.endsWith(')')) ||
+                (question.startsWith('[') && question.endsWith(']'))) {
+              console.log(`[HandsFree-P2][VAD] ❌ Filtered hallucination: "${question}"`);
+              vadPhaseRef.current = 'wake';
+              if (handsFreeActiveRef.current) startHandsFreeListening();
+              return;
+            }
+
+            if (isRepeatRequest(question) && lastAnswerRef.current) {
+              console.log('[HandsFree-P2][VAD] 🔁 Repeat request — re-speaking last answer');
+              playBeep('tickle');
+              handleDesktopActions(lastAnswerRef.current, 'voice');
+              return;
+            }
+
+            console.log(`[HandsFree-P2][VAD] ✅ Question: "${question}" — Sending to AI...`);
+            handleInteractionRequest({ requestId: `hf-voice-${Date.now()}`, question, inputType: 'voice' });
+          } else {
+            console.log('[HandsFree-P2][VAD] Empty transcription — back to wake word.');
+            vadPhaseRef.current = 'wake';
+            if (handsFreeActiveRef.current) startHandsFreeListening();
+          }
+        } catch (err) {
+          console.error('[HandsFree-P2][VAD] Transcription error:', err);
+          setIsTranscribing(false);
+          vadPhaseRef.current = 'wake';
+          if (handsFreeActiveRef.current) startHandsFreeListening();
+        }
+      };
+
+      vad.start(); // Resume the already-warm VAD for question capture
+      return;
+    }
+
+    // Fallback: amplitude-based (only if VAD failed to initialise — unexpected in normal flow)
+    startAudioCapture(2, async (audioBlob) => {
+      if (!handsFreeActiveRef.current) { setIsTranscribing(false); return; }
+
+      if (audioBlob.size < 1000) {
+        if (isFollowUp) {
+          console.log('[HandsFree-P2] Follow-Up window closed. Back to wake word.');
+          if (handsFreeActiveRef.current) startHandsFreeListening();
+        } else {
+          if (handsFreeActiveRef.current) autoRestartListening();
+        }
+        return;
+      }
+
+      pipelineStartRef.current = performance.now();
+      startThinkingVideo();
+      setIsTranscribing(true);
+      try {
+        const result = await transcribeBlob(audioBlob);
+        if (!handsFreeActiveRef.current) { setIsTranscribing(false); return; }
         setIsTranscribing(false);
 
-        if (result.success && result.text && result.text.trim()) {
+        if (result.success && result.text?.trim()) {
           const question = result.text.trim();
-          
-          // Filter out Whisper hallucinating background noise as e.g. "(chatter)", "(clicking)", "[silence]"
-          if ((question.startsWith('(') && question.endsWith(')')) || (question.startsWith('[') && question.endsWith(']'))) {
-             console.log(`[HandsFree-P2] ❌ Ignored background noise transcription: "${question}"`);
-             if (handsFreeActiveRef.current) startHandsFreeListening(); // Back to Wake Word
-             return;
+          if (/[♪♬]/.test(question) ||
+              (question.startsWith('(') && question.endsWith(')')) ||
+              (question.startsWith('[') && question.endsWith(']'))) {
+            if (handsFreeActiveRef.current) startHandsFreeListening();
+            return;
           }
-
-          console.log(`[HandsFree-P2] ✅ Question: "${question}" — Sending to AI...`);
-          const requestId = `hf-voice-${Date.now()}`;
-          handleInteractionRequest({
-            requestId,
-            question,
-            inputType: 'voice'
-          });
+          if (isRepeatRequest(question) && lastAnswerRef.current) {
+            playBeep('tickle');
+            handleDesktopActions(lastAnswerRef.current, 'voice');
+            return;
+          }
+          handleInteractionRequest({ requestId: `hf-voice-${Date.now()}`, question, inputType: 'voice' });
         } else {
-          console.log('[HandsFree-P2] Empty transcription — back to wake word...');
           if (handsFreeActiveRef.current) startHandsFreeListening();
         }
       } catch (err) {
-        console.error('[HandsFree-P2] Error:', err);
         setIsTranscribing(false);
         if (handsFreeActiveRef.current) startHandsFreeListening();
       }
     }, isFollowUp);
   };
 
+  // === PHASE 2 ROUTER: Web Speech (online/Gemini) or Whisper (offline/Gemma) ===
+  const startQuestionRecording = (isFollowUp = false) => {
+    if (isFollowUp) {
+      console.log(`[HandsFree-P2] 🎤 Follow-Up Window Open! (5 seconds to speak)`);
+      playBeep('process_p1');
+    } else {
+      console.log(`[HandsFree-P2] 🎤 Ready for question — speak now...`);
+    }
+    if (activeModuleRef.current === 'gemini') {
+      startWebSpeechQuestion(isFollowUp);
+    } else {
+      startWhisperQuestion(isFollowUp);
+    }
+  };
+
   // === STOP HANDS-FREE (full cleanup + cancellation) ===
   const stopHandsFree = () => {
     console.log('[HandsFree] ⏹️ CANCEL — Stopping hands-free mode.');
-    handsFreeActiveRef.current = false; // Prevent all async callbacks from restarting
+    handsFreeActiveRef.current = false;
+    // Stop Web Speech API if it was running (online mode)
+    if (webSpeechRecognitionRef.current) {
+      try { webSpeechRecognitionRef.current.stop(); } catch (e) {}
+      webSpeechRecognitionRef.current = null;
+    }
+    // Destroy Silero VAD if it was running (offline mode)
+    if (offlineVADRef.current) {
+      try { offlineVADRef.current.destroy(); } catch (e) {}
+      offlineVADRef.current = null;
+    }
+    vadPhaseRef.current = 'wake';
+    vadQuestionHandlerRef.current = null;
     if (monitorIntervalRef.current) {
       clearInterval(monitorIntervalRef.current);
       monitorIntervalRef.current = null;
@@ -915,6 +2238,18 @@ const ClientDashboard = () => {
 
   // === MUTE-BUTTON MODE: stopMonitoring ===
   const stopMonitoring = () => {
+    // Web Speech (online mute-button)
+    if (webSpeechRecognitionRef.current) {
+      try { webSpeechRecognitionRef.current.stop(); } catch(e) {}
+      webSpeechRecognitionRef.current = null;
+    }
+    // VAD (offline mute-button) — pause and clear handler, keep instance warm for reuse
+    if (offlineVADRef.current && vadPhaseRef.current === 'question') {
+      try { offlineVADRef.current.pause(); } catch(e) {}
+      vadQuestionHandlerRef.current = null;
+      vadPhaseRef.current = 'wake';
+    }
+    // Amplitude fallback cleanup
     if (monitorIntervalRef.current) {
       clearInterval(monitorIntervalRef.current);
       monitorIntervalRef.current = null;
@@ -983,9 +2318,22 @@ const ClientDashboard = () => {
     const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
     const isHandsFree = vs.handsFreeMode === true;
 
+    // ONLINE mode = Gemini Live real-time call. Fully replaces the VAD/Whisper/TTS
+    // chain: one persistent full-duplex session, so start/stop is all we manage here.
+    if (activeModuleRef.current === 'gemini') {
+      if (liveActiveRef.current) {
+        playBeep('cancel');
+        stopGeminiLive();
+      } else {
+        if (isAIBusy || isTranscribing) return;
+        await startGeminiLive();
+      }
+      return;
+    }
+
     // If already active in any mode, stop everything
     if (isMonitoring || isListening || isWakeWordListening || (isTranscribing && isHandsFree)) {
-      playBeep('stop');
+      playBeep('cancel');
       handsFreeActiveRef.current = false; // END SESSION
       
       if (isHandsFree) {
@@ -1015,108 +2363,19 @@ const ClientDashboard = () => {
       // === HANDS-FREE MODE: Offline wake word via Whisper ===
       console.log('[Dashboard] 🎙️ Starting HANDS-FREE mode (offline wake word)...');
       handsFreeActiveRef.current = true; // START SESSION
-      startHandsFreeListening();
+      await startHandsFreeListening();
       return;
     }
 
-    try {
-      handsFreeActiveRef.current = true; // START SESSION
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      });
-      monitorStreamRef.current = stream;
-
-      // Create AnalyserNode for real-time audio level monitoring
-      const monitorCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const source = monitorCtx.createMediaStreamSource(stream);
-      const analyser = monitorCtx.createAnalyser();
-      analyser.fftSize = 512;
-      source.connect(analyser);
-
-      const dataArray = new Uint8Array(analyser.frequencyBinCount);
-      let silenceFrames = 0;
-      let speechFrames = 0;
-      let hasSpoken = false;
-      const SILENCE_THRESHOLD = 10;    // Audio level below this = muted
-      const UNMUTE_THRESHOLD = 15;     // Audio level above this = unmuted
-      const MIN_SPEECH_FRAMES = 5;
-      const IDLE_FRAMES_TO_STOP = 50;  // 5.0s of thinking time before aborting
-      const MUTE_FRAMES_TO_STOP = 10;  // 1.0s of silence after speech to submit
-
-      setIsMonitoring(true);
-      playBeep('analog_boot'); // Completely different mechanical sweep sound
-      console.log('[Dashboard] 🟢 Monitoring started — waiting for mic UNMUTE...');
-
-      const monitorStartTime = performance.now();
-
-      // Monitor audio levels every 100ms
-      monitorIntervalRef.current = setInterval(() => {
-        // Enforce an aggressive 3500ms DEAF PERIOD so the microphone ignores the mechanical beep
-        if (performance.now() - monitorStartTime < 3000) return;
-
-        analyser.getByteFrequencyData(dataArray);
-        const avgLevel = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-
-        if (!isRecordingRef.current) {
-          // === WAITING FOR UNMUTE ===
-          if (avgLevel > UNMUTE_THRESHOLD) {
-            console.log(`[Dashboard] 🔴 Mic UNMUTED (level: ${avgLevel.toFixed(1)}) — Recording started!`);
-            
-            // Start MediaRecorder
-            audioChunksRef.current = [];
-            const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-            mediaRecorder.ondataavailable = (event) => {
-              if (event.data.size > 0) audioChunksRef.current.push(event.data);
-            };
-            mediaRecorder.onstop = async () => {
-              // Clean up the monitoring stream
-              if (monitorIntervalRef.current) clearInterval(monitorIntervalRef.current);
-              monitorIntervalRef.current = null;
-              monitorStreamRef.current?.getTracks().forEach(track => track.stop());
-              monitorStreamRef.current = null;
-              monitorCtx.close();
-              
-              setIsListening(false);
-              setIsMonitoring(false);
-              await transcribeAndSend();
-              // Note: auto-restart is handled in handleDesktopActions after AI responds
-            };
-            
-            mediaRecorderRef.current = mediaRecorder;
-            mediaRecorder.start(250);
-            isRecordingRef.current = true;
-            silenceFrames = 0;
-            speechFrames = 1;
-            hasSpoken = false;
-            setIsListening(true);
-            setIsMonitoring(false);
-            playBeep('start');
-          }
-        } else {
-          // === RECORDING — WAITING FOR MUTE ===
-          if (avgLevel > UNMUTE_THRESHOLD) {
-            speechFrames++;
-            silenceFrames = 0; // Reset silence counter if sound detected
-            if (speechFrames >= MIN_SPEECH_FRAMES) hasSpoken = true;
-          } else {
-            silenceFrames++;
-            const currentTimeout = hasSpoken ? MUTE_FRAMES_TO_STOP : IDLE_FRAMES_TO_STOP;
-            if (silenceFrames >= currentTimeout) {
-              console.log(`[Dashboard] ⏹️ Mic MUTED (silence for ${(currentTimeout * 100 / 1000).toFixed(1)}s) — Stopping & transcribing...`);
-              playBeep('stop');
-              isRecordingRef.current = false;
-              if (mediaRecorderRef.current?.state === 'recording') {
-                mediaRecorderRef.current.stop(); // Triggers onstop → transcribe
-              }
-            }
-          }
-        }
-      }, 100);
-
-    } catch (err) {
-      console.error('[Dashboard] Microphone access denied:', err);
-      alert('Microphone access denied. Please allow microphone access in your system settings.');
-    }
+    // Always use offline VAD + Whisper for STT regardless of AI module.
+    // WebSpeech API fails in Electron because Electron has no Google API key bundled
+    // (Chrome browser does; Electron doesn't). The AI backend (Ollama vs Gemini) is
+    // determined downstream by activeModuleRef — only STT is affected here.
+    handsFreeActiveRef.current = true;
+    setIsMonitoring(true);
+    await playBeepAsync('analog_boot');
+    if (!handsFreeActiveRef.current) return;
+    startMuteButtonVAD(2000);
   };
 
   // Convert WebM audio blob to WAV format for whisper-cli
@@ -1207,6 +2466,12 @@ const ClientDashboard = () => {
         if (window.electronAPI?.stopSTT) {
             window.electronAPI.stopSTT();
         }
+        // Tear down any running Gemini Live session on unmount.
+        if (geminiLiveRef.current) {
+            try { geminiLiveRef.current.stop(); } catch (e) {}
+            geminiLiveRef.current = null;
+            liveActiveRef.current = false;
+        }
     };
   }, []);  useEffect(() => {
     if (mobileSyncEnabled && window.electronAPI?.setMobilePresetsEnabled) {
@@ -1222,14 +2487,12 @@ const ClientDashboard = () => {
 
   const isAIAuthorized = (user?.models || []).includes('gemma') || (user?.models || []).includes('gemini') || user?.role === 'superadmin';
   const aiName = isAIAuthorized ? 'AI' : 'Predefined';
-
   const tabs = [
     { id: 'modules', name: 'AI Modules', icon: <FaRobot /> },
     { id: 'videos', name: 'Videos', icon: <FaVideo /> },
     { id: 'instructions', name: 'Instructions', icon: <FaPenNib />, show: isAIAuthorized && activeModule !== 'predefined' },
     { id: 'qa', name: 'Q&A', icon: <FaQuestionCircle />, show: showQATab },
-    { id: 'voice', name: 'Voice', icon: <FaVolumeUp /> },
-    { id: 'downloads', name: 'Downloads', icon: <FaDownload /> }
+    { id: 'voice', name: 'Voice', icon: <FaVolumeUp /> }
   ].filter(t => t.show !== false);
 
   const handleTabChange = async (tabId) => {
@@ -1291,28 +2554,49 @@ const ClientDashboard = () => {
             <div className="flex items-center gap-6">
               {/* Option 2: Live Mic Interaction */}
               {isAIAuthorized && (
-                <button 
-                  onClick={toggleVoiceAssistant}
-                  disabled={isTranscribing && !handsFreeActiveRef.current}
-                  className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black transition-all shadow-md active:scale-95 ${
-                      isTranscribing
-                      ? 'bg-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.4)] animate-pulse cursor-wait'
-                      : isListening 
-                      ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)] animate-pulse'
-                      : isWakeWordListening
-                      ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] animate-pulse'
-                      : isMonitoring
-                      ? 'bg-green-600 text-white shadow-[0_0_15px_rgba(22,163,74,0.4)] animate-pulse'
-                      : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-lg'
-                  }`}
-                >
-                  {isTranscribing ? <FaPenNib /> : isListening ? <FaStop /> : isWakeWordListening ? <FaHandPaper /> : <FaMicrophone />}
-                  <span>
-                    {isTranscribing 
-                      ? (handsFreeActiveRef.current ? 'CANCEL' : 'PROCESSING...') 
-                      : isListening ? `STOP ${aiName.toUpperCase()}` : (isMonitoring || isWakeWordListening) ? 'CANCEL' : 'VOICE ASSISTANT'}
-                  </span>
-                </button>
+                !isOllamaReady ? (
+                  <button 
+                    onClick={() => {
+                      setActiveTab('modules');
+                      localStorage.setItem('trigger_ollama_setup', 'true');
+                    }}
+                    className="flex items-center gap-2 px-6 py-2.5 rounded-xl font-black transition-all shadow-md active:scale-95 bg-red-500 hover:bg-red-600 text-white hover:shadow-lg animate-pulse"
+                  >
+                    <FaExclamationTriangle className="text-white animate-bounce" />
+                    <span>AI SETUP REQUIRED</span>
+                  </button>
+                ) : (
+                  <button 
+                    onClick={toggleVoiceAssistant}
+                    disabled={isTranscribing && !handsFreeActiveRef.current}
+                    className={`flex items-center gap-2 px-6 py-2.5 rounded-xl font-black transition-all shadow-md active:scale-95 ${
+                        isTranscribing
+                        ? 'bg-amber-500 text-white shadow-[0_0_15px_rgba(245,158,11,0.4)] animate-pulse cursor-wait'
+                        : isListening 
+                        ? 'bg-red-600 text-white shadow-[0_0_15px_rgba(220,38,38,0.4)] animate-pulse'
+                        : isWakeWordListening
+                        ? 'bg-indigo-500 text-white shadow-[0_0_15px_rgba(99,102,241,0.4)] animate-pulse'
+                        : isMonitoring
+                        ? 'bg-green-600 text-white shadow-[0_0_15px_rgba(22,163,74,0.4)] animate-pulse'
+                        : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-lg'
+                    }`}
+                  >
+                    {isTranscribing ? <FaPenNib /> : isListening ? <FaStop /> : isWakeWordListening ? <FaHandPaper /> : <FaMicrophone />}
+                    <span>
+                      {isTranscribing 
+                        ? (handsFreeActiveRef.current ? 'CANCEL' : 'PROCESSING...') 
+                        : isListening ? `STOP ${aiName.toUpperCase()}` : (isMonitoring || isWakeWordListening) ? 'CANCEL' : 'VOICE ASSISTANT'}
+                    </span>
+                  </button>
+                )
+              )}
+
+              {/* P5: PTT indicator — shown when Ctrl+Space is held */}
+              {isPTTRecording && (
+                <div className="flex items-center gap-2 bg-red-100 border border-red-400 text-red-700 px-3 py-1.5 rounded-xl text-xs font-bold animate-pulse">
+                  <FaMicrophone className="text-red-600" />
+                  <span>PTT — Release Ctrl+Space to send</span>
+                </div>
               )}
 
               <div className="h-8 w-px bg-gray-200"></div>
@@ -1428,7 +2712,6 @@ const ClientDashboard = () => {
         {activeTab === 'instructions' && <AISystemInstructions />}
         {activeTab === 'qa' && <QAManagement />}
         {activeTab === 'voice' && <VoiceSettings />}
-        {activeTab === 'downloads' && <DownloadPortal />}
       </main>
 
       {/* --- SYSTEM SPECS MODAL --- */}

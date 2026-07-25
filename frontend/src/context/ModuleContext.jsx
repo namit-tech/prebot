@@ -64,9 +64,9 @@ export const ModuleProvider = ({ children }) => {
     }
   };
 
-  const processQuestion = async (question) => {
+  const processQuestion = async (question, onChunk = null) => {
     try {
-      return await moduleManager.processQuestion(question);
+      return await moduleManager.processQuestion(question, onChunk);
     } catch (err) {
       throw err;
     }

@@ -1,27 +1,52 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { FaRobot, FaCheckCircle, FaExclamationTriangle, FaSpinner, FaCog } from 'react-icons/fa';
+import { FaRobot, FaCheckCircle, FaExclamationTriangle, FaSpinner, FaCog, FaDownload } from 'react-icons/fa';
 
 /**
  * Ollama Setup Wizard
  * Auto-configures Ollama CORS for first-time users
  */
 const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) => {
-  const [step, setStep] = useState('checking'); // checking, needs-setup, configuring, model-selection, pulling-model, success, error
+  const [step, setStep] = useState('checking'); // checking, needs-setup, installing, configuring, model-selection, pulling-model, success, error
   const [setupStatus, setSetupStatus] = useState(null);
   const [configSteps, setConfigSteps] = useState([]);
   const [error, setError] = useState(null);
   const [models, setModels] = useState([]);
-  const [isInstalling, setIsInstalling] = useState(false);
   const [isPulling, setIsPulling] = useState(false);
   const [pullProgress, setPullProgress] = useState(0);
   const [downloadSpeed, setDownloadSpeed] = useState('');
+  const [installLogs, setInstallLogs] = useState([]);
+  const [installPhase, setInstallPhase] = useState('preparing'); // preparing, downloading, running, verifying, starting
   const logEndRef = useRef(null);
+  const installLogsRef = useRef(null);
+  const stepRef = useRef(step);
 
+  // Auto-scroll install logs
+  useEffect(() => {
+    if (installLogsRef.current) {
+      installLogsRef.current.scrollTop = installLogsRef.current.scrollHeight;
+    }
+  }, [installLogs]);
 
   useEffect(() => {
-    // Silent progress listener
+    // Progress listener for both install and model pull
     const cleanup = window.electronAPI.onOllamaLog((msg) => {
-      // Parse percentage: "pulling 7462734796d6:  27%"
+      // During install step, capture all log messages
+      if (stepRef.current === 'installing') {
+        // Clean up the message for display
+        let displayMsg = msg.replace(/\[OllamaSetup\]\s*/g, '').replace(/\[OllamaSetup:?\w*\]\s*/g, '').trim();
+        if (displayMsg) {
+          setInstallLogs(prev => [...prev.slice(-20), displayMsg]); // Keep last 20 messages
+        }
+
+        // Detect install phases from log messages
+        if (msg.includes('Downloading') || msg.includes('download')) setInstallPhase('downloading');
+        else if (msg.includes('Requesting elevation') || msg.includes('Installer staged') || msg.includes('Activating')) setInstallPhase('running');
+        else if (msg.includes('Verifying installation')) setInstallPhase('verifying');
+        else if (msg.includes('Starting headless') || msg.includes('Headless service') || msg.includes('Waiting for AI')) setInstallPhase('starting');
+        else if (msg.includes('Suppressing')) setInstallPhase('starting');
+      }
+
+      // Parse percentage for model pull: "pulling 7462734796d6:  27%"
       if (msg.includes('%')) {
         const match = msg.match(/(\d+)%/);
         if (match) setPullProgress(parseInt(match[1]));
@@ -38,19 +63,22 @@ const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) =
 
     return () => cleanup();
   }, [defaultTarget]);
-  
-  // Polling removed to prevent race conditions with installer cleanup.
-  // The handleInstall promise itself will handle the transition.
+
+  // Keep the ref in sync with state so the log listener closure reads the latest step
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
   
   const handleInstall = async () => {
     console.log('Wizard: handleInstall clicked');
     try {
-      setIsInstalling(true);
+      setStep('installing');
+      setInstallLogs([]);
+      setInstallPhase('preparing');
       setError(null);
+      
       const result = await window.electronAPI.ollamaInstall();
       console.log('Wizard: Install request result:', result);
-      
-      setIsInstalling(false); // Stop installing state before check
       
       if (result.success) {
         // Refresh setup status and move to next logical step
@@ -58,11 +86,12 @@ const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) =
         await checkSetup(target);
       } else {
         setError(result.error);
+        setStep('error');
       }
     } catch (err) {
       console.error('Wizard: Install error:', err);
       setError(err.message);
-      setIsInstalling(false);
+      setStep('error');
     }
   };
 
@@ -191,6 +220,18 @@ const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) =
     }
   };
 
+  // Install phase display info
+  const getInstallPhaseInfo = () => {
+    const phases = {
+      preparing: { label: 'Preparing Installation', icon: '📦', progress: 10 },
+      downloading: { label: 'Locating Installer', icon: '📥', progress: 25 },
+      running: { label: 'Installing AI Core', icon: '⚙️', progress: 50 },
+      verifying: { label: 'Verifying Installation', icon: '🔍', progress: 75 },
+      starting: { label: 'Starting AI Service', icon: '🚀', progress: 90 },
+    };
+    return phases[installPhase] || phases.preparing;
+  };
+
   const renderStepIndicator = (stepStatus) => {
     if (stepStatus === 'success') {
       return <FaCheckCircle className="text-green-500" />;
@@ -230,21 +271,42 @@ const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) =
         {/* Needs Setup */}
         {step === 'needs-setup' && (
           <div>
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
-              <div className="flex items-start">
-                <FaExclamationTriangle className="text-yellow-600 text-2xl mr-3 mt-1" />
-                <div>
-                  <h3 className="font-semibold text-yellow-900 mb-2">
-                    {setupStatus?.ollamaInstalled ? 'Configuration Required' : 'AI Core Not Found'}
-                  </h3>
-                  <p className="text-yellow-800 text-sm">
-                    {setupStatus?.ollamaInstalled 
-                      ? 'The AI Core needs to be configured to allow connections from this application.'
-                      : 'An AI Core is required to run models locally. Please install it to continue.'}
-                  </p>
+            {/* LM Studio detected but API not active — show targeted guidance first */}
+            {setupStatus?.lmStudioRunning && !setupStatus?.apiAvailable ? (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-5 mb-5">
+                <div className="flex items-start">
+                  <FaExclamationTriangle className="text-blue-500 text-xl mr-3 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <h3 className="font-semibold text-blue-900 mb-1">LM Studio Detected — Local Server Not Active</h3>
+                    <p className="text-blue-800 text-sm mb-3">
+                      LM Studio is open but its Local Server is not running. Enable it to use LM Studio as the AI engine.
+                    </p>
+                    <ol className="text-sm text-blue-800 space-y-1 list-decimal pl-4">
+                      <li>In LM Studio, open the <strong>Local Server</strong> tab (left sidebar)</li>
+                      <li>Load a model (e.g. Gemma 3)</li>
+                      <li>Click <strong>Start Server</strong></li>
+                      <li>Return here and click <strong>Check Again</strong></li>
+                    </ol>
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6 mb-6">
+                <div className="flex items-start">
+                  <FaExclamationTriangle className="text-yellow-600 text-2xl mr-3 mt-1" />
+                  <div>
+                    <h3 className="font-semibold text-yellow-900 mb-2">
+                      {setupStatus?.ollamaInstalled ? 'Configuration Required' : 'AI Core Not Found'}
+                    </h3>
+                    <p className="text-yellow-800 text-sm">
+                      {setupStatus?.ollamaInstalled
+                        ? 'The AI Core needs to be configured to allow connections from this application.'
+                        : 'An AI Core is required to run models locally. Please install it to continue.'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {setupStatus && (
               <div className="mb-6 space-y-2 text-sm">
@@ -270,25 +332,32 @@ const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) =
             )}
 
             <div className="flex gap-3">
-              {!setupStatus?.ollamaInstalled ? (
+              {setupStatus?.lmStudioRunning && !setupStatus?.apiAvailable ? (
                 <button
-                  onClick={handleInstall}
-                  disabled={isInstalling}
+                  onClick={() => checkSetup()}
                   className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2"
                 >
-                  {isInstalling ? <FaSpinner className="animate-spin" /> : <FaCog />}
-                  {isInstalling ? 'Installer Running...' : 'Setup AI Core'}
+                  <FaSpinner className={step === 'checking' ? 'animate-spin' : ''} />
+                  Check Again
+                </button>
+              ) : !setupStatus?.ollamaInstalled ? (
+                <button
+                  onClick={handleInstall}
+                  className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2"
+                >
+                  <FaDownload />
+                  Setup AI Core
                 </button>
               ) : (
                 <button
                   onClick={handleConfigure}
                   className="flex-1 bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2"
                 >
-                  <FaCog className={step === 'configuring' ? "animate-spin" : ""} />
+                  <FaCog className={step === 'configuring' ? 'animate-spin' : ''} />
                   Auto-Configure Now
                 </button>
               )}
-              
+
               {onSkip && (
                 <button
                   onClick={onSkip}
@@ -299,11 +368,112 @@ const OllamaSetupWizard = ({ onComplete, onSkip, targetModel: defaultTarget }) =
               )}
             </div>
 
+            {/* LM Studio alternative hint for non-LM-Studio users */}
+            {!setupStatus?.lmStudioRunning && (
+              <div className="mt-5 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                <p className="text-xs font-semibold text-gray-600 mb-1">Already have LM Studio?</p>
+                <p className="text-xs text-gray-500 leading-relaxed">
+                  Open LM Studio → <strong>Local Server</strong> tab → load a model → click <strong>Start Server</strong>.
+                  Then return here and the AI features will connect automatically.
+                </p>
+              </div>
+            )}
+
             <p className="text-xs text-gray-500 mt-4 text-center">
-              {!setupStatus?.ollamaInstalled 
-                ? 'Check the taskbar for the installer window. Follow the prompts to install.'
+              {!setupStatus?.ollamaInstalled && !setupStatus?.lmStudioRunning
+                ? 'A Windows security prompt will appear — click Yes to allow the installation.'
+                : setupStatus?.lmStudioRunning
+                ? "Start LM Studio's Local Server, then click Check Again above."
                 : 'This will set an environment variable and restart Ollama. No admin privileges required.'}
             </p>
+          </div>
+        )}
+
+        {/* Installing — dedicated progress view */}
+        {step === 'installing' && (
+          <div className="py-4">
+            {/* Phase indicator */}
+            <div className="text-center mb-6">
+              <div className="text-4xl mb-3">{getInstallPhaseInfo().icon}</div>
+              <h3 className="text-xl font-bold text-gray-900 mb-1">
+                {getInstallPhaseInfo().label}
+              </h3>
+              <p className="text-gray-500 text-sm">
+                Please don't close the app. This may take a minute.
+              </p>
+            </div>
+
+            {/* Animated progress bar */}
+            <div className="w-full bg-gray-100 rounded-full h-4 mb-4 overflow-hidden border border-gray-200">
+              <div 
+                className="h-full rounded-full transition-all duration-700 ease-out"
+                style={{ 
+                  width: `${getInstallPhaseInfo().progress}%`,
+                  background: 'linear-gradient(90deg, #3b82f6 0%, #6366f1 50%, #3b82f6 100%)',
+                  backgroundSize: '200% 100%',
+                  animation: 'shimmer 1.5s ease-in-out infinite'
+                }}
+              />
+            </div>
+
+            {/* Step checklist */}
+            <div className="space-y-3 mb-6">
+              {[
+                { id: 'preparing', label: 'Preparing installer' },
+                { id: 'downloading', label: 'Locating AI Core package' },
+                { id: 'running', label: 'Running installer (approve UAC prompt if shown)' },
+                { id: 'verifying', label: 'Verifying installation' },
+                { id: 'starting', label: 'Starting AI service' },
+              ].map((phaseItem) => {
+                const phaseOrder = ['preparing', 'downloading', 'running', 'verifying', 'starting'];
+                const currentIdx = phaseOrder.indexOf(installPhase);
+                const itemIdx = phaseOrder.indexOf(phaseItem.id);
+                const isComplete = itemIdx < currentIdx;
+                const isCurrent = itemIdx === currentIdx;
+
+                return (
+                  <div key={phaseItem.id} className="flex items-center gap-3 text-sm">
+                    {isComplete ? (
+                      <FaCheckCircle className="text-green-500 flex-shrink-0" />
+                    ) : isCurrent ? (
+                      <FaSpinner className="text-blue-500 animate-spin flex-shrink-0" />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full border-2 border-gray-300 flex-shrink-0" />
+                    )}
+                    <span className={
+                      isComplete ? 'text-green-700 line-through' :
+                      isCurrent ? 'text-blue-700 font-semibold' :
+                      'text-gray-400'
+                    }>
+                      {phaseItem.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Live log messages */}
+            {installLogs.length > 0 && (
+              <div 
+                ref={installLogsRef}
+                className="bg-gray-900 rounded-lg p-3 max-h-24 overflow-y-auto font-mono text-xs"
+              >
+                {installLogs.map((log, i) => (
+                  <div key={i} className="text-gray-400 py-0.5">
+                    <span className="text-gray-600 mr-2">›</span>
+                    {log}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Inline CSS for shimmer animation */}
+            <style>{`
+              @keyframes shimmer {
+                0% { background-position: 200% 0; }
+                100% { background-position: -200% 0; }
+              }
+            `}</style>
           </div>
         )}
 

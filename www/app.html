@@ -417,7 +417,7 @@
                 log('📤 Sending: ' + text);
                 
                 try {
-                    const res = await fetch(`http://${this.desktopIP}:3000/api/chat`, {
+                    const res = await fetch(`http://${this.desktopIP}:5001/api/chat`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -454,7 +454,7 @@
                     try {
                         const controller = new AbortController();
                         setTimeout(() => controller.abort(), 1000);
-                        const res = await fetch(`http://${ip}:3000/api/health`, { signal: controller.signal });
+                        const res = await fetch(`http://${ip}:5001/api/health`, { signal: controller.signal });
                         if (res.ok) {
                             this.desktopIP = ip;
                             log('✅ Connected into ' + ip);
@@ -473,7 +473,7 @@
                 if (!this.desktopIP) return alert('Cannot connect to desktop to verify email');
 
                 try {
-                     const res = await fetch(`http://${this.desktopIP}:3000/api/mobile-login`, {
+                     const res = await fetch(`http://${this.desktopIP}:5001/api/mobile-login`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ email })

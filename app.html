@@ -256,7 +256,7 @@
             async loadPresets() {
                 try {
                     log('🔄 Fetching Presets...');
-                    const res = await fetch(`http://${this.desktopIP}:3000/api/questions`);
+                    const res = await fetch(`http://${this.desktopIP}:5001/api/questions`);
                     const questions = await res.json();
                     
                     this.presetsContainer.innerHTML = '';
@@ -286,7 +286,7 @@
             async sendPreset(q) {
                 log(`📤 Triggering Preset: ${q.question}`);
                 try {
-                    const res = await fetch(`http://${this.desktopIP}:3000/api/ask`, {
+                    const res = await fetch(`http://${this.desktopIP}:5001/api/ask`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -366,7 +366,7 @@
                 log('📤 Sending Custom Question: ' + text);
                 
                 try {
-                    const res = await fetch(`http://${this.desktopIP}:3000/api/chat`, {
+                    const res = await fetch(`http://${this.desktopIP}:5001/api/chat`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -393,7 +393,7 @@
                     try {
                         const controller = new AbortController();
                         setTimeout(() => controller.abort(), 1500);
-                        const res = await fetch(`http://${ip}:3000/api/health`, { signal: controller.signal });
+                        const res = await fetch(`http://${ip}:5001/api/health`, { signal: controller.signal });
                         if (res.ok) {
                             this.desktopIP = ip;
                             log('✅ Found Desktop: ' + ip);
@@ -412,7 +412,7 @@
                 if (!this.desktopIP) return alert('PC application not found. Check if PC app is running.');
 
                 try {
-                     const res = await fetch(`http://${this.desktopIP}:3000/api/mobile-login`, {
+                     const res = await fetch(`http://${this.desktopIP}:5001/api/mobile-login`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ email })
