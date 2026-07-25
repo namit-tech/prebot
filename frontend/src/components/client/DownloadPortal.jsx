@@ -2,9 +2,10 @@ import React from 'react';
 import { FaWindows, FaAndroid, FaDownload, FaExclamationTriangle, FaShieldAlt, FaExternalLinkAlt } from 'react-icons/fa';
 
 const DownloadPortal = () => {
-    const [latestVersion, setLatestVersion] = React.useState({ 
+    const [latestVersion, setLatestVersion] = React.useState({
         standard: { version: '1.0.13', filename: 'prebot-setup-v1.0.13.exe' },
-        special: null 
+        special: null,
+        mobile: null
     });
     const [os, setOs] = React.useState('unknown');
 
@@ -17,7 +18,7 @@ const DownloadPortal = () => {
         fetch('/downloads/latest-version.json')
             .then(res => res.json())
             .then(data => {
-                if (data.standard || data.special) {
+                if (data.standard || data.special || data.mobile) {
                    setLatestVersion(prev => ({ ...prev, ...data }));
                 }
             })
@@ -26,7 +27,9 @@ const DownloadPortal = () => {
 
     const PC_DOWNLOAD_URL = `/downloads/${latestVersion.standard.filename}`;
     const SPECIAL_DOWNLOAD_URL = latestVersion.special ? `/downloads/${latestVersion.special.filename}` : '#';
-    const MOBILE_DOWNLOAD_URL = '/downloads/prebot.apk';
+    // Filename comes from the last published APK build; prebot.apk stays as the stable fallback.
+    const MOBILE_FILENAME = latestVersion.mobile?.filename || 'prebot.apk';
+    const MOBILE_DOWNLOAD_URL = `/downloads/${MOBILE_FILENAME}`;
 
     return (
         <div className="space-y-12 max-w-5xl mx-auto pb-20 fade-in">
@@ -109,13 +112,20 @@ const DownloadPortal = () => {
                     <div className="space-y-2">
                         {os === 'mobile' && <span className="bg-emerald-600 text-white px-3 py-1 rounded-full text-[8px] font-black tracking-widest uppercase">Recommended for you</span>}
                         <h3 className="text-xl font-black text-slate-900 leading-tight">PREBOT MOBILE</h3>
-                        <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">ANDROID APP</p>
+                        {latestVersion.mobile ? (
+                            <p className="text-[10px] font-black text-slate-500 uppercase">
+                                Version {latestVersion.mobile.version}
+                                {latestVersion.mobile.sizeLabel ? ` · ${latestVersion.mobile.sizeLabel}` : ''}
+                            </p>
+                        ) : (
+                            <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest">ANDROID APP</p>
+                        )}
                     </div>
                     <div className="w-full space-y-4">
                         <a 
                             href={os === 'windows' ? '#' : MOBILE_DOWNLOAD_URL} 
                             onClick={(e) => os === 'windows' && e.preventDefault()}
-                            download="PreBot.apk"
+                            download={MOBILE_FILENAME}
                             className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 shadow-xl transition-all ${os === 'windows' ? 'bg-gray-200 text-gray-500 cursor-not-allowed shadow-none' : 'bg-emerald-600 text-white hover:bg-emerald-700 hover:shadow-emerald-200'}`}
                         >
                             <FaDownload size={14} />

@@ -3,5 +3,15 @@
     "version": "1.0.14",
     "releaseDate": "2026-06-20T10:03:21.179Z",
     "filename": "prebot-setup-v1.0.14.exe"
+  },
+  "mobile": {
+    "version": "1.1",
+    "versionCode": 2,
+    "buildType": "debug",
+    "releaseDate": "2026-07-25T17:35:42.383Z",
+    "filename": "prebot-v1.1.apk",
+    "size": 128218768,
+    "sizeLabel": "122.3 MB",
+    "sha256": "5e39e45e924822312b3e26655d9d915f1cf892f48f5b9cfd49a973814b0b8af4"
   }
 }
