@@ -70,7 +70,10 @@ async function startBuild() {
 
     // 3. Copy files to Temp Directory
     log('📂 Syncing source to temporary build folder...');
-    const excludeFolders = ['dist', 'dist_build_temp', 'dist_build_special', 'frontend', '.git', 'node_modules'];
+    // downloads/, android/ and www/ are excluded by build.files anyway — copying them here
+    // just moved several GB around before electron-builder threw them away.
+    const excludeFolders = ['dist', 'dist_build_temp', 'dist_build_special', 'frontend', '.git', 'node_modules',
+                            'downloads', 'android', 'www'];
     
     fs.readdirSync(ROOT_DIR).forEach(item => {
         if (!excludeFolders.includes(item)) {
@@ -115,9 +118,14 @@ async function startBuild() {
 
     const distOutputPath = path.join(ROOT_DIR, 'dist');
     
+    // Optional: "--target nsis" builds just the installer instead of nsis + portable + appx.
+    const targetArg = process.argv.indexOf('--target');
+    const winTarget = targetArg !== -1 && process.argv[targetArg + 1] ? process.argv[targetArg + 1] : '';
+    if (winTarget) log(`🎯 Limiting Windows targets to: ${winTarget}`);
+
     try {
         // Build for x64 only and disable asar for bytecode stability
-        execSync(`npx electron-builder --win --x64 -c.electronVersion=${electronVersion} -c.directories.output="${distOutputPath}" -c.asar=false`, { 
+        execSync(`npx electron-builder --win ${winTarget} --x64 -c.electronVersion=${electronVersion} -c.directories.output="${distOutputPath}" -c.asar=false`, {
             stdio: 'inherit',
             cwd: BUILD_TEMP_DIR
         });

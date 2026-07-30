@@ -4,12 +4,12 @@ import authService from './auth.service';
 const API_URL = import.meta.env.VITE_API_URL || 'https://adminapi.elloindia.in/api';
 const LOCAL_BACKEND_URL = 'http://localhost:5000/api';
 
-// For Special Edition, we force port 5000 immediately to stay offline
-// and prevent race conditions with async IPC calls
-// detect if we are running in Electron even if preload hasn't finished
-const isProbablyElectron = typeof window !== 'undefined' && 
+// Detect Electron even if preload hasn't finished
+const isProbablyElectron = typeof window !== 'undefined' &&
   (window.electronAPI || navigator.userAgent.toLowerCase().includes(' electron/'));
 
+// Local data (chat history, device identity) is served by the embedded backend
+// in the desktop app, and by the remote server on the web.
 const api = axios.create({
   baseURL: isProbablyElectron ? LOCAL_BACKEND_URL : API_URL,
   headers: {
@@ -17,20 +17,29 @@ const api = axios.create({
   }
 });
 
-// Hard-force local API if Special Edition
-if (window.electronAPI?.isSpecialEdition) {
-  window.electronAPI.isSpecialEdition().then(isSpecial => {
-    if (isSpecial) {
-      console.log('🛡️ [API] Special Edition Hardening: Forcing local API (localhost:5000)');
-      api.defaults.baseURL = LOCAL_BACKEND_URL;
-    }
-  });
-}
+// Authentication ALWAYS goes to the licence server — never to localhost. The
+// local mock login is what let any email/password into the app.
+export const authApi = axios.create({
+  baseURL: API_URL,
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
 
 // Request interceptor (add token)
 api.interceptors.request.use((config) => {
   const token = authService.getStoredToken();
-  
+
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// The licence server expects the same bearer token
+authApi.interceptors.request.use((config) => {
+  const token = authService.getServerToken();
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

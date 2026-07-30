@@ -209,6 +209,38 @@ function httpGet(url, timeoutMs = 3000) {
 }
 
 /**
+ * Probe one specific port for a live Ollama ENGINE.
+ *
+ * Deliberately hits /api/tags rather than / or /api/version: the bridge on 11434
+ * answers those itself, so they stay "ok" even when the engine behind it is dead.
+ * /api/tags is proxied straight through, so a valid model list proves a real engine.
+ */
+async function probeOllamaEngine(port, timeoutMs = 2000) {
+  try {
+    const resp = await httpGet(`http://127.0.0.1:${port}/api/tags`, timeoutMs);
+    if (!resp.ok) return false;
+    const parsed = JSON.parse(resp.data);
+    return Array.isArray(parsed.models);
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Poll a port until a real engine answers there.
+ *
+ * Process-name checks can't do this job: a user's own Ollama tray app makes
+ * "ollama.exe is running" true while our port stays dead.
+ */
+async function waitForOllamaEngine(port, attempts = 10, delayMs = 2000) {
+  for (let i = 0; i < attempts; i++) {
+    if (await probeOllamaEngine(port)) return true;
+    if (i < attempts - 1) await new Promise(r => setTimeout(r, delayMs));
+  }
+  return false;
+}
+
+/**
  * Test connection to Ollama API
  */
 async function testOllamaConnection() {
@@ -425,13 +457,31 @@ async function restartOllama(logger, logPath = null) {
         };
         
         log(`Spawning HEADLESS AI service at ${cmd} on port 11436...`);
-        const logPath = path.join(process.cwd(), 'ollama-engine.log');
-        const out = fs.openSync(logPath, 'a');
-        const err = fs.openSync(logPath, 'a');
+
+        // process.cwd() is the install dir (C:\Program Files\...) for an installed build, which a
+        // normal user cannot write to — opening the log there threw and killed the spawn before it
+        // ever ran. Log to userData instead, and never let a logging failure block the engine.
+        let stdio = ['ignore', 'ignore', 'ignore'];
+        try {
+          let logDir = os.tmpdir();
+          try {
+            const electron = require('electron');
+            if (electron && electron.app && typeof electron.app.getPath === 'function') {
+              logDir = electron.app.getPath('userData');
+            }
+          } catch (e) { /* not running inside Electron — tmpdir is fine */ }
+
+          const logPath = path.join(logDir, 'ollama-engine.log');
+          const out = fs.openSync(logPath, 'a');
+          stdio = ['ignore', out, out];
+          log(`Engine log: ${logPath}`);
+        } catch (logErr) {
+          log(`Engine log unavailable (${logErr.message}) — starting without it.`);
+        }
 
         const child = spawn(cmd, ['serve'], {
           detached: false, // Keep as child to prevent orphaned processes
-          stdio: ['ignore', out, err],
+          stdio,
           shell: true, // Required for some Windows environments
           env: spawnEnv
         });
@@ -598,14 +648,51 @@ async function installOllamaModel(modelName, logger) {
 
     log(`Preparing intelligence data...`);
 
-    // Ensure server is running before pulling
+    // Resolve the port we can actually pull against.
+    //
+    // The pull below pins OLLAMA_HOST, so "some ollama process is alive" (what
+    // checkOllamaRunning answers) is not good enough. On a machine where the user
+    // already runs the official Ollama tray app, the engine owns 11434 and 11436
+    // is dead. The CLI then tries to auto-start a server, its singleton check hits
+    // the existing instance ("existing instance found, exiting"), nothing ever binds
+    // our port, and the pull dies with "timed out waiting for server to start".
+    //
+    // Models live in one shared store regardless of which port serves them, so a
+    // live engine on the default port is a perfectly good pull target.
+    const ENGINE_PORT = 11436;   // our headless engine, behind the bridge
+    const DEFAULT_PORT = 11434;  // stock Ollama (a user's own install lands here)
+
     log('Verifying AI server status...');
-    const isRunning = await checkOllamaRunning();
-    if (!isRunning) {
+    let pullPort = null;
+
+    if (await probeOllamaEngine(ENGINE_PORT)) {
+        pullPort = ENGINE_PORT;
+    } else if (await probeOllamaEngine(DEFAULT_PORT)) {
+        // Don't disturb a working engine just because it isn't on our port.
+        log(`Using the AI engine already running on port ${DEFAULT_PORT}.`);
+        pullPort = DEFAULT_PORT;
+    } else {
         log('AI server not active. Waking it up...');
         await restartOllama(logger);
-        await new Promise(r => setTimeout(r, 3000));
+        // Cold start on a slow disk (or with AV scanning ollama.exe) routinely
+        // takes longer than the flat 3s wait this replaced.
+        if (await waitForOllamaEngine(ENGINE_PORT, 12, 2000)) {
+            pullPort = ENGINE_PORT;
+        } else if (await waitForOllamaEngine(DEFAULT_PORT, 3, 2000)) {
+            log(`Preferred port unavailable — falling back to port ${DEFAULT_PORT}.`);
+            pullPort = DEFAULT_PORT;
+        }
     }
+
+    if (!pullPort) {
+        throw new Error(
+            'The AI engine could not be started, so the model could not be downloaded. ' +
+            'If Ollama is already installed on this PC, quit it from the system tray ' +
+            '(right-click the Ollama icon → Quit) and try again.'
+        );
+    }
+
+    log(`AI server ready on port ${pullPort}.`);
 
     return new Promise((resolve, reject) => {
       const path = require('path');
@@ -619,10 +706,10 @@ async function installOllamaModel(modelName, logger) {
       const cmd = fs.existsSync(defaultPath) ? defaultPath : 'ollama'; 
       log(`Using AI engine at: ${cmd}`);
       
-      const spawnEnv = { 
-        ...process.env, 
-        OLLAMA_ORIGINS: "*", 
-        OLLAMA_HOST: "127.0.0.1:11436" // Always use bridge-compatible port for headless pulls
+      const spawnEnv = {
+        ...process.env,
+        OLLAMA_ORIGINS: "*",
+        OLLAMA_HOST: `127.0.0.1:${pullPort}` // Verified live above — never a port we only hope is up
       };
       const child = spawn(cmd, ['pull', modelName], { env: spawnEnv });
   
@@ -678,6 +765,12 @@ async function installOllamaModel(modelName, logger) {
           
           if (isProgressBar && !cleanOutput.toLowerCase().includes('error')) {
               reject(new Error(`Model download was interrupted. Please try again.`));
+          } else if (/existing instance found|timed out waiting for server/i.test(cleanOutput)) {
+              // Another Ollama instance owns the engine and blocked ours from starting.
+              reject(new Error(
+                  'Another copy of Ollama is already running on this PC and blocked the AI engine from starting. ' +
+                  'Quit Ollama from the system tray (right-click the Ollama icon → Quit), then try again.'
+              ));
           } else {
               const lines = cleanOutput.split('\n').filter(l => l.trim());
               const lastError = lines.slice(-2).join(' ') || 'Unknown error';

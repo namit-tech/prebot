@@ -9,7 +9,12 @@ let serverPort = null;
  * Start embedded Express backend server
  * Returns the port number it's running on
  */
-async function startEmbeddedBackend() {
+async function startEmbeddedBackend(options = {}) {
+  // Session verifier supplied by the host (main.js wires this to SecurityManager).
+  // Absent it, every gated endpoint denies — these routes sit on an open local
+  // port, so they must never fail open.
+  const { verifySessionToken, allowDevOrigins = false } = options;
+
   return new Promise((resolve, reject) => {
     if (server) {
       console.log('Backend already running on port:', serverPort);
@@ -18,89 +23,91 @@ async function startEmbeddedBackend() {
     }
 
     const app = express();
-    
-    // Middleware
-    app.use(cors());
+
+    // This server listens on localhost with no browser origin of its own (the
+    // renderer runs from file://), so a page the user has open in Chrome could
+    // otherwise call it. Allow only origin-less callers — the app itself, and
+    // native/mobile clients — and refuse to hand CORS headers to real web origins.
+    app.use(cors({
+      origin: (origin, callback) => {
+        // Packaged app (file://) and native/mobile callers
+        if (!origin || origin === 'null') return callback(null, true);
+        // Vite dev server, unpackaged runs only
+        if (allowDevOrigins && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+          return callback(null, true);
+        }
+        return callback(null, false);
+      }
+    }));
     app.use(express.json());
-    
+
+    /**
+     * Gate for anything that exposes user or licence state.
+     * The bearer token must be one the main process signed for this machine.
+     */
+    const requireSession = (req, res, next) => {
+      const header = req.headers.authorization || '';
+      const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+
+      let session = null;
+      try {
+        session = token && typeof verifySessionToken === 'function' ? verifySessionToken(token) : null;
+      } catch (e) {
+        session = null;
+      }
+
+      if (!session) {
+        return res.status(401).json({ success: false, error: 'Not authorized' });
+      }
+
+      req.session = session;
+      next();
+    };
+
     // Simple health check endpoint
     app.get('/api/health', (req, res) => {
       res.json({ status: 'ok', message: 'PreBot backend running' });
     });
-    
-    // Mock authentication endpoint for offline mode
-    app.post('/api/auth/login', (req, res) => {
-      // For offline mode, always succeed
-      const { email } = req.body;
-      
+
+    // NOTE: there is deliberately no local /api/auth/login. Credentials are only
+    // ever checked by the licence server, via the main process. A local login
+    // endpoint on an open port is exactly what let any password into the app.
+
+    // Reports the session this machine actually holds — no longer a fixed
+    // "always valid" answer, and unreachable without the signed token.
+    app.get('/api/auth/validate', requireSession, (req, res) => {
+      const session = req.session;
       res.json({
         success: true,
         data: {
-            token: 'offline-mode-token',
-            licenseToken: 'offline-license-token',
-            expiryDate: '2099-12-31T23:59:59Z',
-            models: ['predefined', 'gemma', 'gemini'],
             user: {
-                id: 'offline-user-id',
-                email: email || 'offline@prebot.local',
-                name: 'Offline User',
-                role: 'special-edition',
-                companyName: 'PreBot Offline'
+                _id: session.user?.id || session.user?._id || null,
+                email: session.email,
+                role: session.role,
+                companyName: session.user?.companyName || null
+            },
+            subscription: {
+                status: 'active',
+                expiryDate: session.expiryDate,
+                models: session.models || [],
+                aiModel: session.aiModel || null
             }
         }
       });
     });
 
-    // Mock validation endpoint
-    app.get('/api/auth/validate', (req, res) => {
-      res.json({
-        success: true,
-        data: {
-            user: {
-                _id: 'offline-user-id',
-                email: 'offline@prebot.local',
-                role: 'special-edition',
-                companyName: 'PreBot Offline'
-            },
-            subscription: {
-                status: 'active',
-                expiryDate: '2099-12-31T23:59:59Z',
-                models: ['predefined', 'gemma', 'gemini'],
-                aiModel: 'gemma2:2b'
-            }
-        }
-      });
-    });
-    
     // Device identity endpoint (for license validation)
-    app.get('/api/device/identity', (req, res) => {
-      const os = require('os');
-      res.json({
-        success: true,
-        deviceId: os.hostname(),
-        platform: os.platform()
-      });
-    });
-    
-    // Mock license validation endpoint
-    app.post('/api/license/validate', (req, res) => {
-      // For offline mode, grant all modules
-      res.json({
-        success: true,
-        valid: true,
-        modules: ['predefined', 'gemma', 'gemini']
-      });
-    });
-    
-    // Mock chat history storage
+    // /api/device/identity and /api/license/validate were removed: nothing called
+    // either, and the licence one handed out every module to any caller.
+
+    // Chat history — user data, so it needs the same session gate.
     let chatHistory = [];
-    
-    // Mock chat history endpoint
-    app.get('/api/chat-history', (req, res) => {
+
+    app.get('/api/chat-history', requireSession, (req, res) => {
       res.json({ success: true, data: chatHistory });
     });
-    
-    app.post('/api/chat-history', (req, res) => {
+
+    app.post('/api/chat-history', requireSession, (req, res) => {
       const message = req.body;
       chatHistory.push({
         ...message,

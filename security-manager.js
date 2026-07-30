@@ -4,13 +4,9 @@ const crypto = require('crypto');
 const { machineIdSync } = require('node-machine-id');
 
 class SecurityManager {
-    constructor(userDataPath, config = {}) {
+    constructor(userDataPath) {
         this.userDataPath = userDataPath;
         this.licensePath = path.join(userDataPath, 'sys-config.dat');
-        
-        // Master credentials (can be overridden by config)
-        this.masterEmail = config.defaultAuth?.email || 'standalone@prebot.ai';
-        this.masterPassword = config.defaultAuth?.password || 'PREBOT-2026-X-SPECIAL';
     }
 
     getMachineID() {
@@ -46,40 +42,86 @@ class SecurityManager {
         }
     }
 
-    isSpecialUser(email, password) {
-        return email === this.masterEmail && password === this.masterPassword;
+    // --- Session tokens -----------------------------------------------------
+    //
+    // The renderer cannot be trusted with session state (DevTools can rewrite
+    // localStorage at will), so a session is only ever real if it carries an
+    // HMAC this process produced. The key is derived from the machine ID, so a
+    // token lifted off one PC is meaningless on another.
+
+    signPayload(payloadB64) {
+        return crypto.createHmac('sha256', this.getEncryptionKey()).update(payloadB64).digest('hex');
     }
 
-    saveSpecialLicense(expiryDate) {
-        const data = JSON.stringify({
-            activated: true,
-            expiryDate: expiryDate,
-            machineId: this.getMachineID(),
-            role: 'special-edition'
-        });
-        const encrypted = this.encrypt(data);
-        fs.writeFileSync(this.licensePath, encrypted);
-        console.log('[Security] Special license saved for machine:', this.getMachineID());
+    createSessionToken(session) {
+        const payloadB64 = Buffer.from(JSON.stringify(session)).toString('base64url');
+        return `${payloadB64}.${this.signPayload(payloadB64)}`;
     }
 
-    getSpecialLicense() {
-        if (!fs.existsSync(this.licensePath)) return null;
-        
+    /**
+     * Returns the session payload, or null if the token is forged, tampered
+     * with, bound to another machine, or past its expiry.
+     */
+    verifySessionToken(token) {
+        if (typeof token !== 'string') return null;
+
+        const [payloadB64, signature] = token.split('.');
+        if (!payloadB64 || !signature) return null;
+
+        const provided = Buffer.from(signature, 'utf8');
+        const expected = Buffer.from(this.signPayload(payloadB64), 'utf8');
+        // Length check first: timingSafeEqual throws on a length mismatch.
+        if (provided.length !== expected.length) return null;
+        if (!crypto.timingSafeEqual(provided, expected)) return null;
+
+        let session;
         try {
-            const encrypted = fs.readFileSync(this.licensePath, 'utf8');
-            const decrypted = this.decrypt(encrypted);
-            if (!decrypted) return { error: 'INVALID_MACHINE_BINDING' };
-            
-            const data = JSON.parse(decrypted);
-            
-            // Anti-tamper: Check machine ID
-            if (data.machineId !== this.getMachineID()) {
-                return { error: 'MACHINE_MISMATCH' };
-            }
-            
-            return data;
+            session = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
         } catch (e) {
-            return { error: 'CORRUPT_LICENSE' };
+            return null;
+        }
+
+        if (session.machineId !== this.getMachineID()) return null;
+        if (!session.expiryDate || new Date() >= new Date(session.expiryDate)) return null;
+
+        return session;
+    }
+
+    /**
+     * Persist a session that this process has already authenticated.
+     * Encrypted at rest with the machine key, and signed so tampering is detectable.
+     */
+    saveSession(session) {
+        const bound = { ...session, machineId: this.getMachineID(), issuedAt: new Date().toISOString() };
+        const token = this.createSessionToken(bound);
+        fs.writeFileSync(this.licensePath, this.encrypt(JSON.stringify({ token })));
+        console.log('[Security] Session stored for machine:', this.getMachineID());
+        return token;
+    }
+
+    /**
+     * Returns { session, token } for a valid stored session, otherwise null.
+     */
+    getSession() {
+        if (!fs.existsSync(this.licensePath)) return null;
+
+        try {
+            const decrypted = this.decrypt(fs.readFileSync(this.licensePath, 'utf8'));
+            if (!decrypted) return null; // wrong machine — key won't decrypt
+
+            const { token } = JSON.parse(decrypted);
+            const session = this.verifySessionToken(token);
+            return session ? { session, token } : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    clearSession() {
+        try {
+            if (fs.existsSync(this.licensePath)) fs.unlinkSync(this.licensePath);
+        } catch (e) {
+            console.warn('[Security] Could not clear session:', e.message);
         }
     }
 }

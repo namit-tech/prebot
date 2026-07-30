@@ -63,11 +63,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setPrimaryVideo: (video) => ipcRenderer.invoke('set-primary-video', video),
   deleteVideo: (videoId) => ipcRenderer.invoke('delete-video', videoId),
   
-  // Special Edition (Standalone)
-  specialLogin: (email, password) => ipcRenderer.invoke('special-login', { email, password }),
-  checkLocalLicense: () => ipcRenderer.invoke('check-local-license'),
-  isSpecialEdition: () => ipcRenderer.invoke('is-special-edition'),
-  
+  // Authentication — the session is minted and verified in the main process
+  authLogin: (email, password) => ipcRenderer.invoke('auth:login', { email, password }),
+  authGetSession: () => ipcRenderer.invoke('auth:get-session'),
+  authLogout: () => ipcRenderer.invoke('auth:logout'),
+
   // WiFi Hotspot
   getHotspotStatus: () => ipcRenderer.invoke('get-hotspot-status'),
   startHotspot: (ssid, password) => ipcRenderer.invoke('start-hotspot', { ssid, password }),

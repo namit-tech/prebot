@@ -19,19 +19,6 @@ let pc2Server = null;
 let securityManager = null;
 let ollamaBridge = null;
 
-// Special Edition Detection
-const specialConfigPath = path.join(__dirname, 'special-config.json');
-const isSpecialEditionBuild = fs.existsSync(specialConfigPath);
-let specialConfig = {};
-if (isSpecialEditionBuild) {
-    try {
-        specialConfig = JSON.parse(fs.readFileSync(specialConfigPath, 'utf8'));
-        console.log('🛡️ [Main] Special Edition Detected (Army Build)');
-    } catch (e) {
-        console.error('❌ Failed to parse special-config.json');
-    }
-}
-
 // Show startup message in console
 console.log('\n');
 console.log('========================================');
@@ -422,12 +409,12 @@ app.on('ready', () => {
 // Initialize Security and Bridge
 app.whenReady().then(async () => {
     const userDataPath = app.getPath('userData');
-    securityManager = new SecurityManager(userDataPath, specialConfig);
-    
-    // ONLY Start the internal Ollama bridge automatically in Special Edition
-    // Fallback: Also start if in development/unpacked mode to help debugging
-    const shouldStartBridge = (isSpecialEditionBuild && specialConfig.autoStartBridge) || !app.isPackaged;
-    
+    securityManager = new SecurityManager(userDataPath);
+
+    // There is one edition now, and the local Ollama bridge is core to it, so it
+    // always starts rather than being gated on a build flag.
+    const shouldStartBridge = true;
+
     if (shouldStartBridge) {
         try {
             // SIMPLE & STRAIGHT: Forcefully clear port 11434 specifically
@@ -485,58 +472,115 @@ app.whenReady().then(async () => {
     }
 });
 
-// IPC: Special Edition Detection
-ipcMain.handle('is-special-edition', () => {
-    return isSpecialEditionBuild || !app.isPackaged;
-});
+// --- Authentication -------------------------------------------------------
+//
+// Login runs HERE, not in the renderer. If the renderer performed the login and
+// handed the result over, anyone with DevTools could call the save IPC with a
+// role of their choosing. Main talks to the licence server itself and is the only
+// thing that can mint a session, so the renderer holds nothing worth forging.
 
-// IPC: Special Edition Login
-ipcMain.handle('special-login', async (event, { email, password }) => {
+const REMOTE_API_URL = process.env.PREBOT_API_URL || 'https://adminapi.elloindia.in/api';
+const OFFLINE_GRACE_DAYS = 30; // how long a cached session survives with no expiry from the server
+
+function postJson(url, body, timeoutMs = 20000) {
+    return new Promise((resolve, reject) => {
+        const https = require('https');
+        const http = require('http');
+        const parsed = new URL(url);
+        const payload = JSON.stringify(body);
+        const transport = parsed.protocol === 'https:' ? https : http;
+
+        const req = transport.request({
+            hostname: parsed.hostname,
+            port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+            path: parsed.pathname + parsed.search,
+            method: 'POST',
+            timeout: timeoutMs,
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                let json = null;
+                try { json = JSON.parse(data); } catch (e) { /* non-JSON error page */ }
+                resolve({ status: res.statusCode, json, raw: data });
+            });
+        });
+
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timed out')); });
+        req.write(payload);
+        req.end();
+    });
+}
+
+// IPC: Login against the licence server, then mint a local signed session
+ipcMain.handle('auth:login', async (event, { email, password }) => {
     try {
-        console.log(`[Security] Special login attempt for: ${email}`);
-        
-        if (securityManager.isSpecialUser(email, password)) {
-            // Success! Generate a local license (valid for 1 year by default)
-            const expiry = new Date();
-            expiry.setFullYear(expiry.getFullYear() + 1);
-            
-            securityManager.saveSpecialLicense(expiry.toISOString());
-            
-            return { 
-                success: true, 
-                user: {
-                    email: email,
-                    role: 'special-edition',
-                    expiryDate: expiry.toISOString(),
-                    models: ['gemma', 'gemini', 'predefined'] // Unlock all
-                }
+        if (!securityManager) return { success: false, error: 'Security subsystem not ready' };
+
+        const hardwareId = securityManager.getMachineID();
+        console.log(`[Auth] Login attempt for ${email}`);
+
+        let response;
+        try {
+            response = await postJson(`${REMOTE_API_URL}/auth/login`, { email, password, hardwareId });
+        } catch (netErr) {
+            console.warn('[Auth] Licence server unreachable:', netErr.message);
+            return {
+                success: false,
+                offline: true,
+                error: 'Cannot reach the licence server. An internet connection is required to sign in.'
             };
         }
-        
-        return { success: false, error: 'Invalid special credentials' };
+
+        if (response.status !== 200 || !response.json?.success) {
+            const serverMsg = response.json?.error || response.json?.message;
+            console.log(`[Auth] Rejected (${response.status}) for ${email}`);
+            return { success: false, error: serverMsg || 'Invalid email or password' };
+        }
+
+        const data = response.json.data || {};
+        const fallbackExpiry = new Date(Date.now() + OFFLINE_GRACE_DAYS * 86400000).toISOString();
+
+        const session = {
+            email: data.user?.email || email,
+            role: data.user?.role || 'user',
+            models: data.models || data.user?.subscription?.models || [],
+            expiryDate: data.expiryDate || fallbackExpiry,
+            serverToken: data.token || null,
+            licenseToken: data.licenseToken || null,
+            aiModel: data.user?.subscription?.aiModel || null,
+            user: data.user || { email, role: data.user?.role || 'user' }
+        };
+
+        const token = securityManager.saveSession(session);
+        console.log(`[Auth] Session issued for ${session.email} (role: ${session.role})`);
+
+        return { success: true, session, token };
     } catch (error) {
+        console.error('[Auth] Login failed:', error.message);
         return { success: false, error: error.message };
     }
 });
 
+// IPC: Restore a previously issued session (this is what makes offline use work)
+ipcMain.handle('auth:get-session', async () => {
+    if (!securityManager) return { success: false, error: 'Security subsystem not ready' };
 
-// IPC: Check Local License (Offline Mode)
-ipcMain.handle('check-local-license', async () => {
-    const license = securityManager.getSpecialLicense();
-    if (!license || license.error) return { success: false, error: license?.error || 'No license' };
-    
-    const isExpired = new Date() > new Date(license.expiryDate);
-    if (isExpired) return { success: false, error: 'LICENSE_EXPIRED' };
-    
-    return { 
-        success: true, 
-        license: {
-            email: 'offline-user@prebot.ai',
-            role: 'special-edition',
-            expiryDate: license.expiryDate,
-            models: ['gemma', 'gemini', 'predefined']
-        }
-    };
+    const stored = securityManager.getSession();
+    if (!stored) return { success: false, error: 'No valid session' };
+
+    return { success: true, session: stored.session, token: stored.token };
+});
+
+// IPC: Logout — drop the stored session
+ipcMain.handle('auth:logout', async () => {
+    if (securityManager) securityManager.clearSession();
+    return { success: true };
 });
 
 // IPC: Get Machine ID for key generation
@@ -888,7 +932,13 @@ app.whenReady().then(async () => {
     // Auto-start Embedded Backend
     console.log('🚀 Starting embedded backend...');
     try {
-        const port = await startEmbeddedBackend();
+        // Resolved per-request, so it stays correct regardless of which
+        // whenReady block finishes constructing securityManager first.
+        const port = await startEmbeddedBackend({
+            verifySessionToken: (token) =>
+                securityManager ? securityManager.verifySessionToken(token) : null,
+            allowDevOrigins: !app.isPackaged // Vite dev server runs on another origin
+        });
         console.log(`✅ Embedded backend ready on port ${port}`);
     } catch (err) {
         console.error('❌ Failed to start embedded backend:', err);
@@ -902,11 +952,8 @@ app.whenReady().then(async () => {
             : '⚠️  Whisper server unavailable — will use CLI fallback');
     });
 
-    // [CLEANUP] Redundant auto-start removed. 
-    // Ollama is now handled in the Bridge-Sync block above to ensure correct port release.
-    if (!isSpecialEditionBuild && !process.argv.includes('--bridge')) {
-        console.log('ℹ️ Standard edition detected - skipping Ollama auto-start');
-    }
+    // [CLEANUP] Redundant auto-start removed.
+    // Ollama is handled in the Bridge-Sync block above to ensure correct port release.
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {

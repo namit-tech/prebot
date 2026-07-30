@@ -32,9 +32,18 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Debug dumps and one-off reports
+lint_report.json
+lint_errors.txt
+lint_log.txt
+final_errors.txt
+asar_list*.txt
+processes.csv
+
 # OS files
 .DS_Store
 Thumbs.db
+desktop.ini
 
 # Large Assets and Models
 assets/whisper/

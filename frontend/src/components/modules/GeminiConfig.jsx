@@ -60,6 +60,7 @@ const AIStatusPanel = ({ onRequestSetup, activeTabId }) => {
     if (activeModuleInstance && activeModuleInstance.setApiKey) {
       activeModuleInstance.setApiKey(apiKey);
     }
+    window.dispatchEvent(new Event('gemini-key-updated'));
     setSuccess(true);
     setTimeout(() => setSuccess(false), 2000);
     checkStatus();

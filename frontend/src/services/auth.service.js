@@ -1,7 +1,12 @@
-import api from './api.service';
+import { authApi } from './api.service';
 import CryptoJS from 'crypto-js';
 
+// NOTE: this only obfuscates values at rest in localStorage — the key ships in
+// the bundle, so it is not a security boundary. On desktop the authority is the
+// signed session held by the main process (see restoreSession below).
 const SECRET_KEY = 'prebot-secret-key-change-in-production';
+
+const isDesktop = () => typeof window !== 'undefined' && !!window.electronAPI?.authLogin;
 
 class AuthService {
   encrypt(data) {
@@ -17,11 +22,21 @@ class AuthService {
     }
   }
 
+  /**
+   * On desktop, main performs the login and mints the session; the renderer only
+   * caches the result for rendering. On the web, we talk to the licence server here.
+   */
   async login(email, password, hardwareId) {
-    const response = await api.post('/auth/login', { email, password, hardwareId });
-    
+    if (isDesktop()) {
+      const result = await window.electronAPI.authLogin(email, password);
+      if (!result.success) throw new Error(result.error || 'Login failed');
+      return this.cacheSession(result.session, result.token);
+    }
+
+    const response = await authApi.post('/auth/login', { email, password, hardwareId });
+
     const { token, licenseToken, expiryDate, models, user } = response.data.data;
-    
+
     // Store encrypted tokens
     localStorage.setItem('auth_token', this.encrypt(token));
     if (licenseToken) {
@@ -52,23 +67,44 @@ class AuthService {
     return response.data.data;
   }
 
-  async specialLogin(email, password) {
-    if (!window.electronAPI?.specialLogin) throw new Error('Platform not supported');
-    
-    const result = await window.electronAPI.specialLogin(email, password);
-    if (!result.success) throw new Error(result.error || 'Activation failed');
+  /**
+   * Mirror a main-process session into localStorage so the UI can render without
+   * an IPC round-trip. This is a cache, never the source of truth.
+   */
+  cacheSession(session, signedToken) {
+    localStorage.setItem('auth_token', this.encrypt(signedToken || session.serverToken || ''));
+    if (session.serverToken) {
+      localStorage.setItem('server_token', this.encrypt(session.serverToken));
+    }
+    if (session.licenseToken) {
+      localStorage.setItem('license_token', this.encrypt(session.licenseToken));
+    }
+    localStorage.setItem('expiry_date', session.expiryDate);
+    localStorage.setItem('models', JSON.stringify(session.models || []));
+    localStorage.setItem('user_role', session.role || 'user');
+    localStorage.setItem('user_data', JSON.stringify(session.user || { email: session.email, role: session.role }));
+    localStorage.setItem('ai_model', session.aiModel || 'gemma3:1b');
 
-    const { user } = result;
-    
-    // Store localized "Special License" state
-    localStorage.setItem('auth_token', this.encrypt('SPECIAL-OFFLINE-TOKEN'));
-    localStorage.setItem('expiry_date', user.expiryDate);
-    localStorage.setItem('models', JSON.stringify(user.models));
-    localStorage.setItem('user_role', user.role);
-    localStorage.setItem('user_data', JSON.stringify(user));
-    localStorage.setItem('ai_model', 'gemma3:1b');
+    return { user: session.user, models: session.models, expiryDate: session.expiryDate };
+  }
 
-    return result;
+  /**
+   * Ask the main process whether a valid session exists. This is the real check:
+   * main verifies the HMAC, the machine binding and the expiry against a file the
+   * renderer cannot forge. Returns the session, or null.
+   */
+  async restoreSession() {
+    if (!window.electronAPI?.authGetSession) return null;
+
+    try {
+      const result = await window.electronAPI.authGetSession();
+      if (!result?.success) return null;
+
+      this.cacheSession(result.session, result.token);
+      return result.session;
+    } catch (e) {
+      return null;
+    }
   }
 
   getStoredToken() {
@@ -79,6 +115,17 @@ class AuthService {
       return this.decrypt(encryptedToken);
     } catch (e) {
       return encryptedToken; // Fallback
+    }
+  }
+
+  getServerToken() {
+    const stored = localStorage.getItem('server_token');
+    if (!stored) return this.getStoredToken();
+
+    try {
+      return this.decrypt(stored);
+    } catch (e) {
+      return stored;
     }
   }
 
@@ -93,28 +140,28 @@ class AuthService {
     }
   }
 
+  /**
+   * Cheap local hint used to render before the async check resolves.
+   * NOT an authority — on desktop, restoreSession() is what actually decides.
+   */
   isTokenValid() {
     const encryptedToken = localStorage.getItem('auth_token');
     if (!encryptedToken) return false;
 
-    const role = this.getUserRole();
-    
-    // Special Edition or Superadmin doesn't need external server check
-    if (role === 'superadmin' || role === 'special-edition') {
-      const expiryDate = localStorage.getItem('expiry_date');
-      if (!expiryDate) return role === 'superadmin'; // Superadmin might not have expiry
-      return new Date() < new Date(expiryDate);
-    }
-
     const expiryDate = localStorage.getItem('expiry_date');
-    if (!expiryDate) return false;
+    if (!expiryDate) return this.getUserRole() === 'superadmin'; // superadmin may have no expiry
 
-    // Check if expired
     return new Date() < new Date(expiryDate);
   }
 
   logout() {
+    if (window.electronAPI?.authLogout) {
+      // Drop the signed session too, otherwise the next launch restores it
+      try { window.electronAPI.authLogout(); } catch (e) { /* best effort */ }
+    }
+
     localStorage.removeItem('auth_token');
+    localStorage.removeItem('server_token');
     localStorage.removeItem('license_token');
     localStorage.removeItem('expiry_date');
     localStorage.removeItem('models');
@@ -144,8 +191,8 @@ class AuthService {
 
   async validateSession() {
     try {
-      const response = await api.get('/auth/validate');
-      
+      const response = await authApi.get('/auth/validate');
+
       if (response.data.success) {
         const { user, subscription } = response.data.data;
         
@@ -195,31 +242,21 @@ class AuthService {
       }
       return false;
     } catch (error) {
-      // OFFLINE HANDLING: If network error (no response), fall back to local token validation
+      // OFFLINE HANDLING: the licence server is unreachable. Fall back to the
+      // signed session in the main process — not to localStorage, which the user
+      // can edit. On the web there is no main process, so the local hint is all
+      // we have and the next online check will settle it.
       if (!error.response) {
-         console.warn('⚠️ [AuthService] Network Error (Offline) - Falling back to local token validation');
-         // If we have a valid format token locally, assume it's good (Offline Mode)
-         return this.isTokenValid();
+        console.warn('⚠️ [AuthService] Licence server unreachable — verifying local signed session');
+        if (isDesktop()) {
+          return !!(await this.restoreSession());
+        }
+        return this.isTokenValid();
       }
-      
+
       // If server responded (e.g. 401 Unauthorized), return false
       return false;
     }
-  }
-
-  async checkLocalLicense() {
-    if (!window.electronAPI?.checkLocalLicense) return false;
-    const result = await window.electronAPI.checkLocalLicense();
-    if (result.success) {
-      const { license } = result;
-      localStorage.setItem('auth_token', this.encrypt('SPECIAL-OFFLINE-TOKEN'));
-      localStorage.setItem('expiry_date', license.expiryDate);
-      localStorage.setItem('models', JSON.stringify(license.models));
-      localStorage.setItem('user_role', license.role);
-      localStorage.setItem('user_data', JSON.stringify(license));
-      return true;
-    }
-    return false;
   }
 }
 

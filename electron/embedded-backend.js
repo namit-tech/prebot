@@ -9,7 +9,10 @@ let serverPort = null;
  * Start embedded Express backend server
  * Returns the port number it's running on
  */
-async function startEmbeddedBackend() {
+async function startEmbeddedBackend(options = {}) {
+  // See the root embedded-backend.js: login must fail closed without a real check.
+  const { validateCredentials } = options;
+
   return new Promise((resolve, reject) => {
     if (server) {
       console.log('Backend already running on port:', serverPort);
@@ -28,12 +31,24 @@ async function startEmbeddedBackend() {
       res.json({ status: 'ok', message: 'PreBot backend running' });
     });
     
-    // Mock authentication endpoint for offline mode
+    // Offline authentication endpoint — credentials are still required.
     app.post('/api/auth/login', (req, res) => {
-      // For offline mode, always succeed
-      // In future, can add local user validation
-      const { email, password } = req.body;
-      
+      const { email, password } = req.body || {};
+
+      let allowed = false;
+      try {
+        allowed = typeof validateCredentials === 'function' && validateCredentials(email, password);
+      } catch (e) {
+        allowed = false;
+      }
+
+      if (!allowed) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid email or password'
+        });
+      }
+
       res.json({
         success: true,
         token: 'offline-mode-token',

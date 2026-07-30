@@ -17,118 +17,94 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
 
   useEffect(() => {
+    const isDesktop = !!window.electronAPI?.authGetSession;
+
+    const clearAuth = () => {
+      authService.logout();
+      setIsAuthenticated(false);
+      setUser(null);
+    };
+
     const checkAuth = async () => {
-      const token = authService.getStoredToken();
-      
-      // Try local license first for Standalone/Special builds
-      if (!token) {
-        const hasLocalLicense = await authService.checkLocalLicense();
-        if (hasLocalLicense) {
-           setIsAuthenticated(true);
-           setUser(authService.getUserData());
-           setLoading(false);
-           return;
+      // Desktop: the main process is the authority. A session exists only if it
+      // carries an HMAC main issued for THIS machine, so rewriting localStorage
+      // in DevTools gets you nothing.
+      if (isDesktop) {
+        const session = await authService.restoreSession();
+        if (!session) {
+          clearAuth();
+          setLoading(false);
+          return;
         }
-        
-        setIsAuthenticated(false);
-        setUser(null);
-        setLoading(false);
-        return;
-      }
 
-      const role = authService.getUserRole();
-      
-      // Superadmin or Special Edition doesn't need external validation
-      if (role === 'superadmin' || role === 'special-edition') {
-        console.log('🛡️ [AuthContext] Special Edition Detected: Skipping online validation');
-        const valid = authService.isTokenValid();
-        setIsAuthenticated(valid);
-        setUser(valid ? authService.getUserData() : null);
-        setLoading(false);
-        return;
-      }
-      
-      const valid = authService.isTokenValid();
-      if (!valid) {
-        setIsAuthenticated(false);
-        setUser(null);
-        setLoading(false);
-        return;
-      }
-
-      // Token format is valid, now validate with server to get fresh data
-      // This ensures we catch expired subscriptions and update model list immediately
-      try {
-        const isValidServer = await authService.validateSession();
-        setIsAuthenticated(isValidServer);
-        if (isValidServer) {
-          setUser(authService.getUserData());
-        } else {
-          // Server rejected it (revoked/expired)
-          authService.logout();
-          setUser(null);
-        }
-      } catch (e) {
-        // Offline or server error - fallback to local validity if allowed
-        // specific offline handling could go here, for now we trust local if it was valid
-        console.warn('Server validation failed (offline?), falling back to local token');
         setIsAuthenticated(true);
         setUser(authService.getUserData());
+        setLoading(false);
+
+        // Best-effort refresh: catches revoked accounts while online, and is a
+        // no-op offline because validateSession falls back to the signed session.
+        authService.validateSession()
+          .then((stillValid) => {
+            if (stillValid) setUser(authService.getUserData());
+            else clearAuth();
+          })
+          .catch(() => { /* offline — the signed session stands */ });
+        return;
       }
-      
+
+      // Web: the server is the authority.
+      if (!authService.getStoredToken() || !authService.isTokenValid()) {
+        setIsAuthenticated(false);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
+      const isValidServer = await authService.validateSession();
+      setIsAuthenticated(isValidServer);
+      if (isValidServer) setUser(authService.getUserData());
+      else clearAuth();
+
       setLoading(false);
     };
 
     checkAuth();
-    
-    // Check expiry/validity every minute (only for clients, not superadmin)
+
+    // Re-check periodically — catches expiry, revoked accounts, and a session
+    // file that has been deleted or tampered with since launch.
     const interval = setInterval(async () => {
-      const role = authService.getUserRole();
-      if (role !== 'superadmin' && role !== 'special-edition') {
-        // First check local validity (expiry)
-        if (!authService.isTokenValid()) {
-          setIsAuthenticated(false);
-          authService.logout();
-          setUser(null);
+      if (isDesktop) {
+        if (!(await authService.restoreSession())) {
+          clearAuth();
           return;
         }
-
-        // Then check with server (for deleted users/revoked access)
-        const isValidServer = await authService.validateSession();
-        if (!isValidServer) {
-          setIsAuthenticated(false);
-          authService.logout();
-          setUser(null);
-        } else {
-          setUser(authService.getUserData());
-        }
+      } else if (!authService.isTokenValid()) {
+        clearAuth();
+        return;
       }
+
+      if (authService.getUserRole() === 'superadmin') return;
+
+      const isValidServer = await authService.validateSession();
+      if (isValidServer) setUser(authService.getUserData());
+      else clearAuth();
     }, 60000);
 
-      return () => clearInterval(interval);
+    return () => clearInterval(interval);
   }, []);
 
+  // One path only. The old version fell back to a local "special" login whenever
+  // the server call failed for ANY reason, which is how a rejected password could
+  // still end up authenticated.
   const login = async (email, password, hardwareId) => {
     try {
-      // 1. Try Normal Server Login
-      try {
-        const result = await authService.login(email, password, hardwareId);
-        setIsAuthenticated(true);
-        setUser(result.user || authService.getUserData());
-        return { success: true, data: result };
-      } catch (serverError) {
-        // 2. If server failed (offline or invalid), try Special Edition Activation
-        console.log('[AuthContext] Server login failed, trying Special Activation...', serverError.message);
-        const specialResult = await authService.specialLogin(email, password);
-        setIsAuthenticated(true);
-        setUser(specialResult.user);
-        return { success: true, data: specialResult };
-      }
+      const result = await authService.login(email, password, hardwareId);
+      setIsAuthenticated(true);
+      setUser(result.user || authService.getUserData());
+      return { success: true, data: result };
     } catch (error) {
-      return { 
-        success: false, 
-        error: error.message || 'Login failed'
-      };
+      const message = error.response?.data?.error || error.message || 'Login failed';
+      return { success: false, error: message };
     }
   };
 

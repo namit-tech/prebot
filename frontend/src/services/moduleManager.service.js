@@ -18,13 +18,6 @@ class ModuleManager {
    * Register available modules
    */
   async registerModules() {
-    // Check if we are in Special Edition mode
-    let isSpecialEdition = false;
-    if (window.electronAPI && window.electronAPI.isSpecialEdition) {
-        isSpecialEdition = await window.electronAPI.isSpecialEdition();
-        if (isSpecialEdition) console.log('[ModuleManager] 🛡️ Special Edition detected: Filtering AI Brains from UI');
-    }
-
     // Get allowed modules from license
     const allowedModels = authService.getStoredModels();
     

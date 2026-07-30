@@ -1,6 +1,6 @@
 {
   "name": "prebot",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "main": "loader.js",
   "description": "Offline AI Chatbot",
   "scripts": {
@@ -20,6 +20,8 @@
     "build:apk:release": "node scripts/build-apk.js --release",
     "publish:apk": "node scripts/publish-apk.js",
     "deploy:apk": "node scripts/deploy-downloads.js",
+    "deploy:exe": "node scripts/deploy-downloads.js --exe-only",
+    "deploy:all": "node scripts/deploy-downloads.js --with-exe",
     "release:apk": "node scripts/build-apk.js --bump --prune-old",
     "sync": "node scripts/sync-frontend.js",
     "build:msix": "electron-builder --win appx",
@@ -86,6 +88,7 @@
       "!*.md",
       "!*.bat",
       "!dist",
+      "!downloads/**/*",
       "!dist_build_*/**/*",
       "!dist_build_temp/**/*",
       "!dist_build_special/**/*",

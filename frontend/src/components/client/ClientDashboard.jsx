@@ -51,6 +51,7 @@ const ClientDashboard = () => {
   const [showSpecsModal, setShowSpecsModal] = useState(false);
   const [showSupportTooltip, setShowSupportTooltip] = useState(false);
   const [isOllamaReady, setIsOllamaReady] = useState(true);
+  const [geminiKeySet, setGeminiKeySet] = useState(!!localStorage.getItem('gemini_api_key'));
   const [isPTTRecording, setIsPTTRecording] = useState(false);
   const pttMediaRecorderRef = useRef(null);
   const pttChunksRef = useRef([]);
@@ -135,7 +136,18 @@ const ClientDashboard = () => {
     };
     checkOllamaStatus();
     const interval = setInterval(checkOllamaStatus, 10000);
-    return () => clearInterval(interval);
+
+    // Keep the Cloud AI Brain key in sync — saved in Settings, cleared elsewhere
+    const syncGeminiKey = () => setGeminiKeySet(!!localStorage.getItem('gemini_api_key'));
+    syncGeminiKey();
+    window.addEventListener('gemini-key-updated', syncGeminiKey);
+    window.addEventListener('storage', syncGeminiKey);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('gemini-key-updated', syncGeminiKey);
+      window.removeEventListener('storage', syncGeminiKey);
+    };
   }, [user, activeTab]);
 
   const getPerformanceRating = (specs) => {
@@ -2487,6 +2499,10 @@ const ClientDashboard = () => {
 
   const isAIAuthorized = (user?.models || []).includes('gemma') || (user?.models || []).includes('gemini') || user?.role === 'superadmin';
   const aiName = isAIAuthorized ? 'AI' : 'Predefined';
+
+  // Cloud AI Brain needs no local engine — don't demand Ollama setup while it's the active brain
+  const cloudBrainReady = activeModule === 'gemini' && geminiKeySet;
+  const needsEngineSetup = !isOllamaReady && !cloudBrainReady;
   const tabs = [
     { id: 'modules', name: 'AI Modules', icon: <FaRobot /> },
     { id: 'videos', name: 'Videos', icon: <FaVideo /> },
@@ -2554,7 +2570,7 @@ const ClientDashboard = () => {
             <div className="flex items-center gap-6">
               {/* Option 2: Live Mic Interaction */}
               {isAIAuthorized && (
-                !isOllamaReady ? (
+                needsEngineSetup ? (
                   <button 
                     onClick={() => {
                       setActiveTab('modules');
