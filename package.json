@@ -24,6 +24,8 @@
     "deploy:all": "node scripts/deploy-downloads.js --with-exe",
     "release:apk": "node scripts/build-apk.js --bump --prune-old",
     "sync": "node scripts/sync-frontend.js",
+    "test:voice": "node scripts/test-clause-stream.mjs",
+    "test:analytics": "node scripts/test-interaction-store.mjs",
     "build:msix": "electron-builder --win appx",
     "lint": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src",
     "lint:fix": "eslint main.js preload.js whisper-handler.js whisper-setup.js stt-handler.js ollama-setup.js embedded-backend.js frontend/src --fix"

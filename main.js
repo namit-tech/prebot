@@ -411,6 +411,9 @@ app.whenReady().then(async () => {
     const userDataPath = app.getPath('userData');
     securityManager = new SecurityManager(userDataPath);
 
+    // Drain anything recorded during a previous run (e.g. an event held offline).
+    startInteractionSync();
+
     // There is one edition now, and the local Ollama bridge is core to it, so it
     // always starts rather than being gated on a build flag.
     const shouldStartBridge = true;
@@ -653,6 +656,108 @@ const whisperHandler = require('./whisper-handler');
 const os = require('os');
 const crypto = require('crypto');
 
+// --- Per-tenant analytics & API metering ------------------------------------
+const InteractionStore = require('./interaction-store');
+const InteractionSync = require('./interaction-sync');
+let interactionStore = null;
+let interactionSync = null;
+
+const getInteractionStore = () => {
+  if (!interactionStore) interactionStore = new InteractionStore(app.getPath('userData'));
+  return interactionStore;
+};
+
+/**
+ * Start the background uploader. Safe to call repeatedly.
+ * The licence server base URL mirrors api.service.js on the renderer side.
+ */
+const startInteractionSync = () => {
+  if (interactionSync) return;
+  interactionSync = new InteractionSync({
+    store: getInteractionStore(),
+    getAuth: () => {
+      const stored = securityManager?.getSession();
+      if (!stored?.session?.serverToken) return null;
+      return {
+        apiBase: process.env.PREBOT_API_URL || 'https://adminapi.elloindia.in/api',
+        serverToken: stored.session.serverToken,
+      };
+    },
+  });
+  interactionSync.start();
+};
+
+/**
+ * Tenant identity for a record, read from the *stored, verified* session.
+ * Deliberately not taken from the renderer: a client machine must not be able to
+ * write records attributed to a different tenant.
+ * Returns null when unlicensed — nothing is recorded in that state.
+ */
+const getTenantContext = () => {
+  // Assigned during app init; a record arriving before that is simply not attributable.
+  if (!securityManager) return null;
+  const stored = securityManager.getSession();
+  if (!stored?.session) return null;
+  const s = stored.session;
+  return {
+    tenantId: s.user?._id || s.user?.id || null,
+    tenantEmail: s.email || null,
+    companyName: s.user?.companyName || null,
+    role: s.role || 'user',
+    deviceId: securityManager.getMachineID(),
+    appVersion: app.getVersion(),
+  };
+};
+
+// IPC: Record one answered question (usage patterns).
+ipcMain.handle('record-interaction', async (event, payload = {}) => {
+  const tenant = getTenantContext();
+  if (!tenant) return { success: false, error: 'No active session' };
+  const rec = getInteractionStore().append({
+    type: 'interaction',
+    ...tenant,
+    question: String(payload.question || '').slice(0, 2000),
+    answer: String(payload.answer || '').slice(0, 4000),
+    module: payload.module || null,
+    inputType: payload.inputType || null,
+    latencyMs: Number(payload.latencyMs) || null,
+  });
+  return { success: !!rec };
+});
+
+// IPC: Record a finished Gemini Live session (minutes + tokens, for cost attribution).
+ipcMain.handle('record-usage', async (event, payload = {}) => {
+  const tenant = getTenantContext();
+  if (!tenant) return { success: false, error: 'No active session' };
+  const rec = getInteractionStore().append({
+    type: 'usage',
+    ...tenant,
+    provider: 'gemini-live',
+    ...payload,
+  });
+  if (rec) {
+    console.log(`[Usage] ${tenant.companyName || tenant.tenantEmail}: ${rec.connectedMinutes}min on ${rec.model}`);
+  }
+  return { success: !!rec };
+});
+
+// IPC: Read analytics. Superadmin only — this is cross-tenant business data, and a
+// client's own machine has no reason to expose it.
+ipcMain.handle('get-usage-analytics', async (event, { since } = {}) => {
+  const tenant = getTenantContext();
+  if (!tenant) return { success: false, error: 'No active session' };
+  if (tenant.role !== 'superadmin') {
+    return { success: false, error: 'Not authorized' };
+  }
+  const store = getInteractionStore();
+  return {
+    success: true,
+    tenant,
+    stats: store.stats(),
+    usage: store.usageSummary({ since }),
+  };
+});
+
 // IPC: Generate Speech
 ipcMain.handle('generate-speech', async (event, { text, voice }) => {
   try {
@@ -668,6 +773,60 @@ ipcMain.handle('generate-speech', async (event, { text, voice }) => {
 // IPC: Get Piper Voices
 ipcMain.handle('get-piper-voices', async () => {
     return piperHandler.getVoices();
+});
+
+// --- Streaming Piper TTS ----------------------------------------------------
+// Raw PCM is pushed to the renderer as Piper produces it, so playback starts on the
+// first chunk instead of after a full WAV is written. Cancellable mid-sentence,
+// which is what lets the user interrupt the assistant.
+const activePiperStreams = new Map();
+
+// IPC: Start a streaming synthesis. Chunks arrive on 'piper-stream-chunk'.
+ipcMain.handle('piper-stream-start', async (event, { text, voice, streamId }) => {
+    try {
+        if (!text || !streamId) return { success: false, error: 'text and streamId are required' };
+
+        // Only one spoken response at a time — a new one supersedes whatever is playing.
+        for (const [id, handle] of activePiperStreams) {
+            handle.cancel();
+            activePiperStreams.delete(id);
+        }
+
+        const sender = event.sender;
+        const send = (channel, payload) => {
+            if (!sender.isDestroyed()) sender.send(channel, payload);
+        };
+
+        const handle = piperHandler.streamSpeech(text, voice, {
+            onChunk: (chunk) => send('piper-stream-chunk', { streamId, chunk }),
+            onEnd: () => {
+                activePiperStreams.delete(streamId);
+                send('piper-stream-end', { streamId });
+            },
+            onError: (err) => {
+                activePiperStreams.delete(streamId);
+                console.error('[IPC] piper-stream failed:', err.message);
+                send('piper-stream-error', { streamId, error: err.message });
+            },
+        });
+
+        activePiperStreams.set(streamId, handle);
+        return { success: true, streamId, sampleRate: piperHandler.getSampleRate(voice) };
+    } catch (error) {
+        console.error('[IPC] piper-stream-start failed:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// IPC: Cancel an in-flight synthesis (barge-in).
+ipcMain.handle('piper-stream-cancel', async (event, { streamId }) => {
+    const handle = activePiperStreams.get(streamId);
+    if (handle) {
+        handle.cancel();
+        activePiperStreams.delete(streamId);
+        return { success: true };
+    }
+    return { success: false };
 });
 
 // IPC: Batch Transcribe Audio (Record → Save → Transcribe)

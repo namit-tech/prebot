@@ -20,6 +20,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
   generateSpeech: (text, voice) => ipcRenderer.invoke('generate-speech', { text, voice }),
   getPiperVoices: () => ipcRenderer.invoke('get-piper-voices'),
 
+  // Per-tenant analytics & API metering. Records are attributed in the main process
+  // from the verified session, so the renderer never states its own tenant identity.
+  recordInteraction: (payload) => ipcRenderer.invoke('record-interaction', payload),
+  recordUsage: (payload) => ipcRenderer.invoke('record-usage', payload),
+  getUsageAnalytics: (opts) => ipcRenderer.invoke('get-usage-analytics', opts || {}),
+
+  // Streaming Piper TTS — raw PCM pushed as it is produced, cancellable for barge-in
+  piperStreamStart: (text, voice, streamId) =>
+    ipcRenderer.invoke('piper-stream-start', { text, voice, streamId }),
+  piperStreamCancel: (streamId) => ipcRenderer.invoke('piper-stream-cancel', { streamId }),
+  onPiperStreamChunk: (callback) => {
+    const subscription = (event, payload) => callback(payload);
+    ipcRenderer.on('piper-stream-chunk', subscription);
+    return () => ipcRenderer.removeListener('piper-stream-chunk', subscription);
+  },
+  onPiperStreamEnd: (callback) => {
+    const subscription = (event, payload) => callback(payload);
+    ipcRenderer.on('piper-stream-end', subscription);
+    return () => ipcRenderer.removeListener('piper-stream-end', subscription);
+  },
+  onPiperStreamError: (callback) => {
+    const subscription = (event, payload) => callback(payload);
+    ipcRenderer.on('piper-stream-error', subscription);
+    return () => ipcRenderer.removeListener('piper-stream-error', subscription);
+  },
+
   // Offline STT
   startSTT: (language, profile) => ipcRenderer.invoke('start-stt', { language, profile }),
   stopSTT: () => ipcRenderer.invoke('stop-stt'),

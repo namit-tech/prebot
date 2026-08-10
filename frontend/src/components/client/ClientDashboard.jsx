@@ -10,6 +10,8 @@ import VoiceSettings from './VoiceSettings';
 import { isElectron } from '../../utils/electron';
 import DownloadPortal from './DownloadPortal';
 import GeminiLiveSession, { DEFAULT_LIVE_MODEL, DEFAULT_LIVE_VOICE } from '../../services/geminiLive.service';
+import OpenAIRealtimeSession, { DEFAULT_OPENAI_REALTIME_MODEL, DEFAULT_OPENAI_REALTIME_VOICE } from '../../services/openAIRealtime.service';
+import { LocalTtsEngine } from '../../services/localTts.service';
 import { FaRobot, FaVideo, FaQuestionCircle, FaVolumeUp, FaMicrophone, FaStop, FaPenNib, FaHandPaper, FaSignOutAlt, FaMicrochip, FaSdCard, FaExclamationTriangle, FaCheckCircle, FaInfoCircle, FaServer, FaHeadset, FaPhoneAlt, FaEnvelope, FaDownload } from 'react-icons/fa';
 import { RnnoiseWorkletNode, loadRnnoise } from '@sapphi-red/web-noise-suppressor';
 
@@ -21,6 +23,32 @@ const AUDIO_CONSTRAINTS = {
   noiseSuppression: { ideal: true },
   autoGainControl: { ideal: true },
   channelCount: 1,
+};
+
+// Full-duplex offline voice. Renders TTS through WebAudio (Piper raw PCM) instead of
+// out-of-process SAPI, so the browser's echo canceller can subtract the assistant's own
+// voice from the mic. That is what allows the mic to stay open while speaking, which is
+// what allows barge-in. With this off, the legacy half-duplex path runs unchanged.
+//
+// Default OFF: echo behaviour depends on the kiosk's speakers and volume, so this is
+// opted into per-device after verifying the assistant doesn't hear itself.
+const isFullDuplexEnabled = () => {
+  try {
+    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    return vs.fullDuplex === true && LocalTtsEngine.isSupported();
+  } catch (e) {
+    return false;
+  }
+};
+
+// Piper voice used for full-duplex playback. Falls back to the bundled US voice.
+const getFullDuplexVoice = () => {
+  try {
+    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    return vs.piperVoice || 'en_US-lessac-medium';
+  } catch (e) {
+    return 'en_US-lessac-medium';
+  }
 };
 
 const ClientDashboard = () => {
@@ -67,7 +95,11 @@ const ClientDashboard = () => {
   const vadDeafUntilRef = useRef(0); // epoch ms — speech-end callbacks before this timestamp are discarded
   const systemAudioPlayRef = useRef(null); // { start, end }
   const speechStartTimestampRef = useRef(null);
+  const localTtsRef = useRef(null);          // active LocalTtsEngine (offline full-duplex TTS)
+  const bargeInArmedRef = useRef(false);     // true while the assistant speaks and may be interrupted
+  const bargeInTurnRef = useRef(false);      // true once barge-in has taken ownership of this turn
   const geminiLiveRef = useRef(null);        // active GeminiLiveSession (online real-time mode)
+  const openAIRealtimeRef = useRef(null);     // active OpenAIRealtimeSession (online real-time mode)
   const liveActiveRef = useRef(false);       // true while a Live call is running
   const liveToolVideoRef = useRef(false);    // true while a user-requested content video plays (via tool)
 
@@ -86,6 +118,10 @@ const ClientDashboard = () => {
       localStorage.setItem('ai_system_instructions', ramPersona);
     }
   }, []);
+
+  useEffect(() => {
+    activeModuleRef.current = activeModule;
+  }, [activeModule]);
 
   useEffect(() => {
     const checkFirstRunOllama = async () => {
@@ -171,6 +207,46 @@ const ClientDashboard = () => {
         clearTimeout(watchdogRef.current);
         watchdogRef.current = null;
     }
+  };
+
+  /**
+   * Barge-in — the user started talking while the assistant was speaking.
+   * Stops playback, kills in-flight synthesis and generation, and treats the
+   * interrupting utterance as the next question (same behaviour as Gemini Live).
+   *
+   * Only reachable in full-duplex mode; the legacy path deafens the mic while speaking.
+   * @returns {boolean} true if an interruption was actually handled
+   */
+  const handleBargeIn = () => {
+    if (!bargeInArmedRef.current) return false;
+    bargeInArmedRef.current = false;
+    // Claims this turn: the in-flight response must not also run its own cleanup.
+    bargeInTurnRef.current = true;
+    console.log('[Dashboard] 🙋 Barge-in — user interrupted the assistant');
+
+    // 1. Stop speaking immediately and kill the Piper process mid-sentence.
+    localTtsRef.current?.cancel();
+
+    // 2. Stop the model so a stale answer can't arrive and talk over the user.
+    try {
+      const gemma = getModuleInstance('gemma');
+      if (gemma?.abort) gemma.abort();
+    } catch (e) { /* module not loaded */ }
+
+    window.electronAPI?.stopHologramVideo();
+    resetBusyState('barge_in');
+
+    // 3. Hand the turn straight back — the words being spoken now are the next question.
+    //    AEC (not a deaf window) is what keeps our own voice out of this capture, so the
+    //    deaf timer is cleared rather than re-armed.
+    vadDeafUntilRef.current = 0;
+    vadPhaseRef.current = 'question';
+    // Route to the listener this mode actually uses — the two modes install different
+    // capture handlers, and starting the wrong one leaves the question uncaptured.
+    const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
+    if (vs.handsFreeMode) startQuestionRecording(false);
+    else startMuteButtonVAD(0);
+    return true;
   };
 
   const startThinkingVideo = () => {
@@ -445,7 +521,12 @@ const ClientDashboard = () => {
             const isPiperVoice = voiceSettings.voice?.includes('lessac') || voiceSettings.voice?.includes('kusal') || voiceSettings.voice?.startsWith('Piper');
             const cleaned = cleanTextForTTS(answer);
 
+            let finishedSpeaking = false;
             const onFinishedSpeaking = () => {
+                // Reachable from onended, onerror and the play() rejection — guard so the
+                // mic is only reopened once per response.
+                if (finishedSpeaking) return;
+                finishedSpeaking = true;
                 // Stop the hologram video immediately when TTS stops
                 console.log('[Dashboard] 🎬 Stopping PRIMARY video (TTS ended)');
                 window.electronAPI?.stopHologramVideo();
@@ -471,9 +552,15 @@ const ClientDashboard = () => {
                     if (voiceSettings.volume) audio.volume = Math.min(voiceSettings.volume, 1.0);
                     audio.onplaying = startPrimaryVideo; // Switch to primary at exact playback start
                     audio.onended = onFinishedSpeaking;
+                    // A decode failure fires onerror without ever firing onended. Route it to the
+                    // same cleanup, otherwise the kiosk stays busy and the mic never reopens.
+                    audio.onerror = () => {
+                        console.error('[Piper] Audio decode/playback failed — cleaning up');
+                        onFinishedSpeaking();
+                    };
                     audio.play().catch((err) => {
-                        console.error(err);
-                        setIsAIBusy(false);
+                        console.error('[Piper] play() rejected:', err);
+                        onFinishedSpeaking();
                     });
                     return;
                 }
@@ -820,6 +907,14 @@ const ClientDashboard = () => {
     window.speechSynthesis.speak(u);
   }, []);
 
+  // Release the full-duplex TTS engine (AudioContext + IPC listeners) on unmount.
+  useEffect(() => {
+    return () => {
+      localTtsRef.current?.dispose().catch(() => {});
+      localTtsRef.current = null;
+    };
+  }, []);
+
   // Re-route wake word when user switches module while hands-free is already running
   useEffect(() => {
     // If a Gemini Live call is running, switching away from online mode ends it cleanly
@@ -927,7 +1022,7 @@ const ClientDashboard = () => {
                             // We need to fetch an answer from the AI!
                             console.log('[Dashboard] Found exact Predefined match but answer is empty (AI Brain) - Routing to AI');
                             const models = user?.models || [];
-                            const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
+                            const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : (models.includes('openai') ? 'openai' : null));
                             if (targetModel) {
                                 const loadResult = await loadModule(targetModel);
                                 if (loadResult.success) currentModule = targetModel;
@@ -948,39 +1043,39 @@ const ClientDashboard = () => {
 
                          // See if user has AI models to fallback to
                          const models = user?.models || [];
-                         const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
+                         const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : (models.includes('openai') ? 'openai' : null));
                          
                          if (targetModel) {
                              console.log(`[Dashboard] No predefined match, falling back to AI: ${targetModel}`);
                              // Try to load the module
                              const loadResult = await loadModule(targetModel);
-                          
-                             if (loadResult.success) {
-                                 currentModule = targetModel;
-                             } else {
-                                 console.error(`[Dashboard] Failed to load ${targetModel}:`, loadResult.error);
-                              
-                                 if (loadResult.code === 'REQUIRES_SETUP' || loadResult.suggestWizard) {
-                                    const confirmSetup = window.confirm(
-                                      'AI Brain needs setup to respond.\n\n' +
-                                      'Option A — Install Ollama: Go to "AI Modules" tab and click "Setup AI Core" for an automated install.\n\n' +
-                                      'Option B — LM Studio: Open LM Studio → Local Server tab → load a model → Start Server.\n\n' +
-                                      'Go to AI Modules now?'
-                                    );
-                                    if (confirmSetup) {
-                                       setActiveTab('modules');
-                                    }
-                                 } else {
-                                    alert(`AI Error: ${loadResult.error || 'Failed to initialize AI Brain'}`);
-                                 }
-                                 return; // Abort interaction if AI failed
-                             }
-                         } else {
-                             console.log('[Dashboard] Predefined mode active but no manual answer or QA provided - skipping processing');
-                             setIsAIBusy(false);
-                             return;
-                         }
-                    }
+                           
+                              if (loadResult.success) {
+                                  currentModule = targetModel;
+                              } else {
+                                  console.error(`[Dashboard] Failed to load ${targetModel}:`, loadResult.error);
+                               
+                                  if (loadResult.code === 'REQUIRES_SETUP' || loadResult.suggestWizard) {
+                                     const confirmSetup = window.confirm(
+                                       'AI Brain needs setup to respond.\n\n' +
+                                       'Option A — Install Ollama: Go to "AI Modules" tab and click "Setup AI Core" for an automated install.\n\n' +
+                                       'Option B — LM Studio: Open LM Studio → Local Server tab → load a model → Start Server.\n\n' +
+                                       'Go to AI Modules now?'
+                                     );
+                                     if (confirmSetup) {
+                                        setActiveTab('modules');
+                                     }
+                                  } else {
+                                     alert(`AI Error: ${loadResult.error || 'Failed to initialize AI Brain'}`);
+                                  }
+                                  return; // Abort interaction if AI failed
+                              }
+                          } else {
+                              console.log('[Dashboard] Predefined mode active but no manual answer or QA provided - skipping processing');
+                              setIsAIBusy(false);
+                              return;
+                          }
+                     }
                 } catch (e) {
                     console.error('Error parsing predefined QA', e);
                 }
@@ -992,7 +1087,7 @@ const ClientDashboard = () => {
             } else {
                 // We have no DB, no manual answer. Ensure an AI module is loaded.
                 const models = user?.models || [];
-                const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : null);
+                const targetModel = models.includes('gemma') ? 'gemma' : (models.includes('gemini') ? 'gemini' : (models.includes('openai') ? 'openai' : null));
                 if (targetModel) {
                     const loadResult = await loadModule(targetModel);
                     if (loadResult.success) currentModule = targetModel;
@@ -1006,19 +1101,35 @@ const ClientDashboard = () => {
 
         // --- 2. Generate response using the active AI Module ---
 
-        // P1: Build a streaming TTS callback for voice input (Web Speech API only — Piper
-        // receives the full string after streaming completes, handled via handleDesktopActions below)
+        // P1: Build a streaming TTS callback for voice input.
+        // Two engines can stream here:
+        //   - full-duplex ON  : Piper raw PCM through WebAudio (interruptible)
+        //   - full-duplex OFF : Web Speech API, and Piper voices fall through to
+        //                       handleDesktopActions which speaks the full string at the end
         const voiceSettingsSnap = JSON.parse(localStorage.getItem('voice_settings') || '{}');
         const ttsMode = voiceSettingsSnap.interactionMode || 'adaptive';
-        const shouldStreamSpeak = ((ttsMode === 'always_speak') || (ttsMode === 'adaptive' && inputType === 'voice'))
-            && !(voiceSettingsSnap.voice?.includes('lessac') || voiceSettingsSnap.voice?.includes('kusal') || voiceSettingsSnap.voice?.startsWith('Piper'));
+        const fullDuplex = isFullDuplexEnabled();
+        const isPiperVoice = voiceSettingsSnap.voice?.includes('lessac')
+            || voiceSettingsSnap.voice?.includes('kusal')
+            || voiceSettingsSnap.voice?.startsWith('Piper');
+        const wantsSpeech = (ttsMode === 'always_speak') || (ttsMode === 'adaptive' && inputType === 'voice');
+        // Full duplex streams every voice through Piper, so the Piper exclusion no longer applies.
+        const shouldStreamSpeak = wantsSpeech && (fullDuplex || !isPiperVoice);
 
         let streamSentencesEmitted = 0;
         let streamSentencesEnded = 0;
         let streamingComplete = false;
         let streamVideoStarted = false;
+        let streamFinished = false;
+        let streamWatchdog = null;
+        bargeInTurnRef.current = false; // fresh turn — no interruption claimed yet
 
+        // Cleanup must be idempotent: onend, onerror and the watchdog can each reach here,
+        // but the mic may only be reopened once.
         const onStreamFinished = () => {
+            if (streamFinished) return;
+            streamFinished = true;
+            if (streamWatchdog) { clearTimeout(streamWatchdog); streamWatchdog = null; }
             if (pipelineStartRef.current) {
                 const totalTime = ((performance.now() - pipelineStartRef.current) / 1000).toFixed(2);
                 console.log(`[⏱️ TIMER] TTS finished speaking`);
@@ -1030,21 +1141,84 @@ const ClientDashboard = () => {
             autoRestartListening();
         };
 
+        // An utterance is "settled" whether it ended cleanly or errored. Counting only onend
+        // leaves emitted > ended forever, so cleanup never runs and the kiosk stays busy.
+        const settleUtterance = () => {
+            streamSentencesEnded++;
+            if (streamingComplete && streamSentencesEnded === streamSentencesEmitted) {
+                onStreamFinished();
+            }
+        };
+
+        // Last-resort net: SAPI can drop both onend and onerror. Without this the mic
+        // never reopens and the kiosk needs a restart.
+        streamWatchdog = setTimeout(() => {
+            console.warn('[Dashboard] Streaming TTS watchdog fired — forcing cleanup');
+            if (fullDuplex) {
+                bargeInArmedRef.current = false;
+                localTtsRef.current?.cancel();
+            } else {
+                try { window.speechSynthesis.cancel(); } catch (e) { /* already torn down */ }
+            }
+            onStreamFinished();
+        }, 45000);
+
+        const startStreamVideo = () => {
+            if (streamVideoStarted) return;
+            streamVideoStarted = true;
+            const storedVids = JSON.parse(localStorage.getItem('videos') || '[]');
+            const primaryId = localStorage.getItem('primary_video');
+            const primaryVid = storedVids.find(v => v.id == primaryId);
+            if (primaryVid && window.electronAPI?.playHologramVideo) {
+                console.log('[Dashboard] 🎬 Switching to PRIMARY video (streaming TTS started)');
+                window.electronAPI.playHologramVideo(primaryVid);
+            }
+        };
+
+        // Full-duplex: one long-lived engine, retargeted at each response. Playback goes
+        // through WebAudio so the mic can stay open and the user can interrupt.
+        if (fullDuplex && shouldStreamSpeak) {
+            if (!localTtsRef.current) {
+                localTtsRef.current = new LocalTtsEngine({ voice: getFullDuplexVoice() });
+            }
+            const engine = localTtsRef.current;
+            engine.reset();
+            engine.voice = getFullDuplexVoice();
+            engine.setVolume(voiceSettingsSnap.volume ?? 1.0);
+            engine.onStart = () => {
+                startStreamVideo();
+                bargeInArmedRef.current = true; // from here on, user speech interrupts
+                // Reopen the mic *while speaking* — the whole point of full duplex. Echo
+                // cancellation keeps our own output out of the capture, so no deaf window.
+                if (offlineVADRef.current && handsFreeActiveRef.current) {
+                    vadPhaseRef.current = 'speaking';
+                    try { offlineVADRef.current.start(); } catch (e) { /* already running */ }
+                }
+                console.log('[LocalTTS] speaking — mic open, barge-in armed');
+            };
+            engine.onDrained = () => {
+                bargeInArmedRef.current = false;
+                // Finished uninterrupted: leave 'speaking' so the normal restart path
+                // (autoRestartListening) decides what listens next.
+                if (vadPhaseRef.current === 'speaking') {
+                    try { offlineVADRef.current?.pause(); } catch (e) { /* already paused */ }
+                    vadPhaseRef.current = 'wake';
+                }
+                onStreamFinished();
+            };
+            engine.onError = (e) => console.error('[LocalTTS] error:', e);
+        }
+
         const streamingTTSChunk = shouldStreamSpeak ? (sentence) => {
             const cleaned = cleanTextForTTS(sentence);
             if (!cleaned) return;
 
-            if (!streamVideoStarted) {
-                streamVideoStarted = true;
-                const storedVids = JSON.parse(localStorage.getItem('videos') || '[]');
-                const primaryId = localStorage.getItem('primary_video');
-                const primaryVid = storedVids.find(v => v.id == primaryId);
-                if (primaryVid && window.electronAPI?.playHologramVideo) {
-                    console.log('[Dashboard] 🎬 Switching to PRIMARY video (streaming TTS started)');
-                    window.electronAPI.playHologramVideo(primaryVid);
-                }
+            if (fullDuplex) {
+                localTtsRef.current?.speak(cleaned);
+                return;
             }
 
+            startStreamVideo();
             streamSentencesEmitted++;
             const utter = new SpeechSynthesisUtterance(cleaned);
             const allVoices = window.speechSynthesis.getVoices();
@@ -1059,13 +1233,15 @@ const ClientDashboard = () => {
             utter.volume = voiceSettingsSnap.volume || 1.0;
             console.log(`[TTS] pitch=${utter.pitch} rate=${utter.rate} vol=${utter.volume} speaking=${window.speechSynthesis.speaking} pending=${window.speechSynthesis.pending}`);
             utter.onstart = () => console.log('[TTS] ✅ onstart fired — audio should be playing');
-            utter.onerror = (e) => console.error('[TTS] ❌ onerror:', e.error);
+            // Chromium fires onerror (never onend) when speechSynthesis.cancel() interrupts a
+            // queued utterance — so this path must settle the counter exactly like onend does.
+            utter.onerror = (e) => {
+                console.error('[TTS] ❌ onerror:', e.error);
+                settleUtterance();
+            };
             utter.onend = () => {
                 console.log('[TTS] onend fired');
-                streamSentencesEnded++;
-                if (streamingComplete && streamSentencesEnded === streamSentencesEmitted) {
-                    onStreamFinished();
-                }
+                settleUtterance();
             };
             window.speechSynthesis.speak(utter);
             console.log(`[TTS] After speak(): speaking=${window.speechSynthesis.speaking} pending=${window.speechSynthesis.pending}`);
@@ -1092,7 +1268,32 @@ const ClientDashboard = () => {
         const aiTime = ((performance.now() - aiStartTime) / 1000).toFixed(2);
         console.log(`[⏱️ TIMER] AI response received in ${aiTime}s`);
 
-        if (shouldStreamSpeak) {
+        // Record the answered question for per-tenant usage patterns. Fire-and-forget —
+        // analytics must never delay speaking or break the turn.
+        if (result.success) {
+          window.electronAPI?.recordInteraction?.({
+            question,
+            answer: finalAnswer,
+            module: activeModuleRef.current,
+            inputType: inputType || 'text',
+            latencyMs: Math.round(performance.now() - aiStartTime),
+          })?.catch?.(() => {});
+        }
+
+        if (shouldStreamSpeak && fullDuplex) {
+            // Normally cleanup fires from the engine's drain callback once the tail finishes.
+            // But if barge-in fired, it already reset state and started the next listener —
+            // running onStreamFinished here too would call autoRestartListening() on top of
+            // that, producing two capture timers and killing the new turn's video.
+            if (bargeInTurnRef.current) {
+                if (streamWatchdog) { clearTimeout(streamWatchdog); streamWatchdog = null; }
+                console.log('[Dashboard] Turn was interrupted — barge-in owns cleanup');
+            } else {
+                const engine = localTtsRef.current;
+                if (!engine || engine.cancelled) onStreamFinished();
+                else engine.endOfStream();
+            }
+        } else if (shouldStreamSpeak) {
             // Mark stream done; cleanup fires from last utterance's onend
             streamingComplete = true;
             console.log(`[⏱️ TIMER] Streaming TTS — ${streamSentencesEmitted} sentences queued`);
@@ -1177,7 +1378,7 @@ const ClientDashboard = () => {
     return { success: false, error: 'No matching video found', available: names };
   };
 
-  // Execute Gemini's function calls and report results back so it can finish speaking.
+  // Execute live API function calls and report results back so it can finish speaking.
   const handleLiveToolCall = async (functionCalls) => {
     const responses = [];
     for (const call of functionCalls) {
@@ -1192,7 +1393,10 @@ const ClientDashboard = () => {
           result = { success: true };
         } else if (name === 'end_conversation') {
           result = { success: true };
-          setTimeout(() => stopGeminiLive(), 2500); // let it say goodbye first
+          setTimeout(() => {
+            if (activeModuleRef.current === 'openai') stopOpenAIRealtime();
+            else stopGeminiLive();
+          }, 2500); // let it say goodbye first
         } else {
           result = { success: false, error: `Unknown tool: ${name}` };
         }
@@ -1201,7 +1405,8 @@ const ClientDashboard = () => {
       }
       responses.push({ id, name, response: { result } });
     }
-    geminiLiveRef.current?.sendToolResponse(responses);
+    if (geminiLiveRef.current) geminiLiveRef.current.sendToolResponse(responses);
+    if (openAIRealtimeRef.current) openAIRealtimeRef.current.sendToolResponse(responses);
   };
 
   const startGeminiLive = async () => {
@@ -1228,7 +1433,7 @@ const ClientDashboard = () => {
     }
     // Google Search grounding: ON by default so the assistant can answer with current,
     // real-time web info. It adds a small web round-trip (slightly slower first word);
-    // disable per-key via localStorage.setItem('gemini_live_search','false').
+    // toggle off via localStorage.gemini_live_search='false' if instantaneous speech matters more.
     const searchEnabled = localStorage.getItem('gemini_live_search') !== 'false';
 
     // Tell the model what it can DO (function calling) beyond talking.
@@ -1274,8 +1479,24 @@ const ClientDashboard = () => {
       // need the official @google/genai SDK (or a Vertex key) to enable — tracked as follow-up.
       enableProactiveAudio: localStorage.getItem('gemini_live_proactive') === 'true',
       enableAffectiveDialog: localStorage.getItem('gemini_live_affective') === 'true',
+      // Cost guards. A Live session bills for streamed audio the entire time it is open, so a
+      // kiosk left connected after the visitor walks away is billed for an empty room — the
+      // dominant source of unexpected spend at an event. Set either to 0 to disable.
+      idleTimeoutMs: Number(localStorage.getItem('gemini_live_idle_ms') ?? 90000),
+      maxSessionMs: Number(localStorage.getItem('gemini_live_max_ms') ?? 900000),
       callbacks: {
         onOpen: () => console.log('[Dashboard][Live] session open'),
+        // The session asked to be closed (idle / ceiling). Teardown goes through the normal
+        // path so UI state, refs and the mic all end up consistent.
+        onAutoClose: (reason) => {
+          console.warn(`[Dashboard][Live] auto-closing session (${reason})`);
+          stopGeminiLive();
+        },
+        // Billing snapshot at session end — minutes and tokens, attributed per tenant
+        // in the main process. Fire-and-forget: metering must never block teardown.
+        onUsageReport: (report) => {
+          window.electronAPI?.recordUsage?.(report)?.catch?.(() => {});
+        },
         onListening: () => {
           setIsAIBusy(false);
           setIsMonitoring(false);
@@ -1300,6 +1521,11 @@ const ClientDashboard = () => {
         },
         onTurnComplete: ({ answer, question }) => {
           if (answer) lastAnswerRef.current = answer;
+          if (question || answer) {
+            window.electronAPI?.recordInteraction?.({
+              question, answer, module: 'gemini-live', inputType: 'voice',
+            })?.catch?.(() => {});
+          }
           if (window.electronAPI?.sendAIResponse) {
             window.electronAPI.sendAIResponse({ requestId: `live-${Date.now()}`, answer, shouldSpeak: false });
           }
@@ -1329,6 +1555,106 @@ const ClientDashboard = () => {
     if (geminiLiveRef.current) {
       try { geminiLiveRef.current.stop(); } catch (e) {}
       geminiLiveRef.current = null;
+    }
+    liveActiveRef.current = false;
+    liveToolVideoRef.current = false;
+    handsFreeActiveRef.current = false;
+    setIsListening(false);
+    setIsMonitoring(false);
+    setIsAIBusy(false);
+    window.electronAPI?.stopHologramVideo?.();
+  };
+
+  const startOpenAIRealtime = async () => {
+    if (liveActiveRef.current) return;
+
+    const apiKey = localStorage.getItem('openai_api_key');
+    if (!apiKey) {
+      alert('Please enter your OpenAI API Key in Cloud AI Settings first.');
+      return;
+    }
+    if (!navigator.onLine) {
+      alert('Internet connection required for Realtime mode.');
+      return;
+    }
+
+    const persona = localStorage.getItem('ai_system_instructions')
+      || 'You are a helpful, professional AI assistant. Keep responses concise and conversational.';
+    const openAiInst = getModuleInstance('openai');
+    let systemInstruction = persona;
+    if (openAiInst && openAiInst.systemContext) {
+      systemInstruction += `\n\nFoundation Knowledge:\n${openAiInst.systemContext}\n\nStrictly answer based on this knowledge if relevant.`;
+    }
+
+    const availableVideos = JSON.parse(localStorage.getItem('videos') || '[]').map(v => v.name).filter(Boolean);
+    systemInstruction += `\n\nYOUR ROLE: You are a spoken-conversation assistant. Your main job is to directly answer the user's questions in a short, natural, helpful way.`;
+    systemInstruction += `\n\nTOOLS: play a video with play_hologram_video ONLY when the user explicitly asks to see/show/watch/play a video${availableVideos.length ? ` (available videos: ${availableVideos.join(', ')})` : ''}; stop it with stop_hologram_video; end the session with end_conversation when the user says goodbye.`;
+
+    const session = new OpenAIRealtimeSession({
+      apiKey,
+      model: localStorage.getItem('openai_model') || DEFAULT_OPENAI_REALTIME_MODEL,
+      voice: localStorage.getItem('openai_voice') || DEFAULT_OPENAI_REALTIME_VOICE,
+      systemInstruction,
+      audioConstraints: AUDIO_CONSTRAINTS,
+      functionDeclarations: LIVE_TOOLS,
+      callbacks: {
+        onOpen: () => console.log('[Dashboard][OpenAIRealtime] session open'),
+        onListening: () => {
+          setIsAIBusy(false);
+          setIsMonitoring(false);
+          setIsListening(true);
+          if (!liveToolVideoRef.current) window.electronAPI?.stopHologramVideo?.();
+        },
+        onModelAudioStart: () => {
+          setIsListening(false);
+          setIsAIBusy(true);
+          if (!liveToolVideoRef.current) switchToPrimaryVideo();
+        },
+        onUserTranscript: (t) => console.log(`[Dashboard][OpenAIRealtime] 🗣️ user: "${t}"`),
+        onModelTranscript: (t) => console.log(`[Dashboard][OpenAIRealtime] 🤖 model: "${t}"`),
+        onToolCall: handleLiveToolCall,
+        onInterrupted: () => {
+          console.log('[Dashboard][OpenAIRealtime] ⛔ barge-in — user interrupted');
+          setIsAIBusy(false);
+          setIsListening(true);
+          if (!liveToolVideoRef.current) window.electronAPI?.stopHologramVideo?.();
+        },
+        onTurnComplete: ({ answer, question }) => {
+          if (answer) lastAnswerRef.current = answer;
+          if (question || answer) {
+            window.electronAPI?.recordInteraction?.({
+              question, answer, module: 'openai-realtime', inputType: 'voice',
+            })?.catch?.(() => {});
+          }
+          if (window.electronAPI?.sendAIResponse) {
+            window.electronAPI.sendAIResponse({ requestId: `live-${Date.now()}`, answer, shouldSpeak: false });
+          }
+        },
+        onError: (msg) => {
+          console.error('[Dashboard][OpenAIRealtime] error:', msg);
+          alert(`OpenAI Realtime mode error: ${msg}`);
+          stopOpenAIRealtime();
+        },
+        onClose: () => stopOpenAIRealtime(),
+      },
+    });
+
+    openAIRealtimeRef.current = session;
+    liveActiveRef.current = true;
+    handsFreeActiveRef.current = true;
+    setIsMonitoring(true);
+    playBeep('start');
+
+    const ok = await session.start();
+    if (!ok) {
+      stopOpenAIRealtime();
+    }
+  };
+
+  const stopOpenAIRealtime = () => {
+    if (openAIRealtimeRef.current) {
+      try { openAIRealtimeRef.current.stop(); } catch (e) {}
+      openAIRealtimeRef.current = null;
     }
     liveActiveRef.current = false;
     liveToolVideoRef.current = false;
@@ -1767,6 +2093,15 @@ const ClientDashboard = () => {
 
       onSpeechStart: () => {
         if (!handsFreeActiveRef.current) return;
+
+        // Full duplex: speech detected while the assistant is talking = interruption.
+        // Handled here (on speech START, not END) so playback stops the instant the user
+        // opens their mouth, rather than after they finish the sentence.
+        if (vadPhaseRef.current === 'speaking') {
+          if (handleBargeIn()) return;
+          return; // armed=false means playback already ended; ignore this trailing detection
+        }
+
         speechStartTimestampRef.current = performance.now();
         // Always show RED "AI IS LISTENING" when speech is detected in question phase.
         // TTS is now fully awaited (playBeepAsync) before VAD starts, so there is no system
@@ -1783,6 +2118,14 @@ const ClientDashboard = () => {
 
       onSpeechEnd: async (audio) => {
         if (!handsFreeActiveRef.current) return;
+
+        // Still in 'speaking' at speech-end means barge-in did not claim this utterance
+        // (playback had already finished). Drop it rather than letting it fall through to
+        // the wake-word check, which would transcribe the tail of our own response.
+        if (vadPhaseRef.current === 'speaking') {
+          console.log('[VAD] Speech ended during playback with no barge-in — discarding');
+          return;
+        }
 
         // Route to question handler (hands-free P2 or mute-button)
         if (vadPhaseRef.current === 'question') {
@@ -1975,7 +2318,7 @@ const ClientDashboard = () => {
     await playBeepAsync('analog_boot');
     if (!handsFreeActiveRef.current) return;
 
-    if (activeModuleRef.current === 'gemini') {
+    if (activeModuleRef.current === 'gemini' || activeModuleRef.current === 'openai') {
       // Online mode — use Web Speech API (instant, no local compute)
       startWebSpeechWakeWord(wakeWord);
     } else {
@@ -2094,7 +2437,7 @@ const ClientDashboard = () => {
           const currentSettings = JSON.parse(localStorage.getItem('voice_settings') || '{}');
           const lang = currentSettings.sttLanguage || 'en';
           let result;
-          if (activeModuleRef.current === 'gemini') {
+          if (activeModuleRef.current === 'gemini' || activeModuleRef.current === 'openai') {
             const gResult = await transcribeWithGoogleSTT(wavBytes);
             result = gResult !== null ? gResult : await window.electronAPI.transcribeAudio(Array.from(wavBytes), lang);
           } else {
@@ -2198,7 +2541,7 @@ const ClientDashboard = () => {
     } else {
       console.log(`[HandsFree-P2] 🎤 Ready for question — speak now...`);
     }
-    if (activeModuleRef.current === 'gemini') {
+    if (activeModuleRef.current === 'gemini' || activeModuleRef.current === 'openai') {
       startWebSpeechQuestion(isFollowUp);
     } else {
       startWhisperQuestion(isFollowUp);
@@ -2219,6 +2562,9 @@ const ClientDashboard = () => {
       try { offlineVADRef.current.destroy(); } catch (e) {}
       offlineVADRef.current = null;
     }
+    // Stop any in-flight Piper synthesis so a killed session can't keep speaking.
+    bargeInArmedRef.current = false;
+    localTtsRef.current?.cancel();
     vadPhaseRef.current = 'wake';
     vadQuestionHandlerRef.current = null;
     if (monitorIntervalRef.current) {
@@ -2330,8 +2676,7 @@ const ClientDashboard = () => {
     const vs = JSON.parse(localStorage.getItem('voice_settings') || '{}');
     const isHandsFree = vs.handsFreeMode === true;
 
-    // ONLINE mode = Gemini Live real-time call. Fully replaces the VAD/Whisper/TTS
-    // chain: one persistent full-duplex session, so start/stop is all we manage here.
+    // ONLINE mode = Real-time call (Gemini Live / OpenAI Realtime).
     if (activeModuleRef.current === 'gemini') {
       if (liveActiveRef.current) {
         playBeep('cancel');
@@ -2339,6 +2684,17 @@ const ClientDashboard = () => {
       } else {
         if (isAIBusy || isTranscribing) return;
         await startGeminiLive();
+      }
+      return;
+    }
+
+    if (activeModuleRef.current === 'openai') {
+      if (liveActiveRef.current) {
+        playBeep('cancel');
+        stopOpenAIRealtime();
+      } else {
+        if (isAIBusy || isTranscribing) return;
+        await startOpenAIRealtime();
       }
       return;
     }
@@ -2497,11 +2853,12 @@ const ClientDashboard = () => {
   const hasPredefined = (user?.models || []).includes('predefined') || user?.role === 'superadmin' || isDesktop;
   const showQATab = hasPredefined || mobileSyncEnabled;
 
-  const isAIAuthorized = (user?.models || []).includes('gemma') || (user?.models || []).includes('gemini') || user?.role === 'superadmin';
+  const isAIAuthorized = (user?.models || []).includes('gemma') || (user?.models || []).includes('gemini') || (user?.models || []).includes('openai') || user?.role === 'superadmin';
   const aiName = isAIAuthorized ? 'AI' : 'Predefined';
 
   // Cloud AI Brain needs no local engine — don't demand Ollama setup while it's the active brain
-  const cloudBrainReady = activeModule === 'gemini' && geminiKeySet;
+  const openAiKeySet = !!localStorage.getItem('openai_api_key');
+  const cloudBrainReady = (activeModule === 'gemini' && geminiKeySet) || (activeModule === 'openai' && openAiKeySet);
   const needsEngineSetup = !isOllamaReady && !cloudBrainReady;
   const tabs = [
     { id: 'modules', name: 'AI Modules', icon: <FaRobot /> },

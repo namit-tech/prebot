@@ -1,6 +1,7 @@
 import ModulePredefined from '../modules/ModulePredefined';
 import ModuleGemma from '../modules/ModuleGemma';
 import ModuleGemini from '../modules/ModuleGemini';
+import ModuleOpenAI from '../modules/ModuleOpenAI';
 import authService from './auth.service';
 
 /**
@@ -26,9 +27,10 @@ class ModuleManager {
       this.modules.set('predefined', new ModulePredefined());
     }
     
-    // Register Offline Brain (Gemma) & Online Brain (Gemini)
+    // Register Offline Brain (Gemma), Gemini Cloud, & OpenAI Cloud Brain
     const hasGemmaAccess = allowedModels.includes('gemma');
     const hasGeminiAccess = allowedModels.includes('gemini');
+    const hasOpenAIAccess = allowedModels.includes('openai') || allowedModels.includes('gemini');
 
     if (hasGemmaAccess) {
       if (!this.modules.has('gemma')) {
@@ -40,8 +42,15 @@ class ModuleManager {
     if (hasGeminiAccess) {
       if (!this.modules.has('gemini')) {
         const module = new ModuleGemini();
-        module.name = 'Cloud AI Brain';
+        module.name = 'Cloud AI (Gemini)';
         this.modules.set('gemini', module);
+      }
+    }
+    if (hasOpenAIAccess) {
+      if (!this.modules.has('openai')) {
+        const module = new ModuleOpenAI();
+        module.name = 'Cloud AI (ChatGPT)';
+        this.modules.set('openai', module);
       }
     }
 
@@ -59,6 +68,9 @@ class ModuleManager {
     }
     if (hasGeminiAccess) {
       finalModules.push('gemini');
+    }
+    if (hasOpenAIAccess) {
+      finalModules.push('openai');
     }
 
     this.availableModules = Array.from(new Set(finalModules));
@@ -87,8 +99,8 @@ class ModuleManager {
     // Check if user has access to this module
     const allowedModels = authService.getStoredModels();
     
-    // Check for explicit permission
-    const isAllowed = allowedModels.includes(moduleId);
+    // Check for explicit permission (if gemini is allowed, we allow openai too)
+    const isAllowed = allowedModels.includes(moduleId) || (moduleId === 'openai' && allowedModels.includes('gemini'));
 
     if (!isAllowed) {
       throw new Error(`Module ${moduleId} not included in your subscription`);

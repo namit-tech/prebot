@@ -1,5 +1,6 @@
 import BaseModule from './BaseModule';
 import memoryService from '../services/memory.service';
+import { createClauseSplitter } from '../utils/clauseStream';
 
 /**
  * Module 2: Gemma 3 1B AI
@@ -22,6 +23,19 @@ class ModuleGemma extends BaseModule {
     this.isOllamaAvailable = false;
     this.chatHistory = []; // Short-term sliding window
     this.MAX_HISTORY = 12; // Industry standard window size
+    this._abortController = null; // in-flight generation, cancelled on barge-in
+  }
+
+  /**
+   * Stop the in-flight generation immediately (barge-in).
+   * Safe to call when nothing is running.
+   * @returns {boolean} whether a generation was actually cancelled
+   */
+  abort() {
+    if (!this._abortController) return false;
+    this._abortController.abort();
+    this._abortController = null;
+    return true;
   }
 
   async initialize() {
@@ -273,6 +287,13 @@ class ModuleGemma extends BaseModule {
     
     console.log(`[GemmaModule] Using ${this.engineType} engine at ${this.ollamaUrl}${endpoint}`);
 
+    // One in-flight generation at a time. Barge-in calls abort() to stop the model
+    // mid-sentence — without this the assistant keeps generating after being
+    // interrupted and the stale answer still arrives to be spoken.
+    if (this._abortController) this._abortController.abort();
+    this._abortController = new AbortController();
+    const signal = this._abortController.signal;
+
     const response = await fetch(`${this.ollamaUrl}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -282,7 +303,8 @@ class ModuleGemma extends BaseModule {
         stream: true,
         temperature: 0.7,
         keep_alive: -1
-      })
+      }),
+      signal
     });
 
     if (!response.ok) {
@@ -294,8 +316,10 @@ class ModuleGemma extends BaseModule {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let aiResponse = '';
-    let sentenceBuffer = '';
+    let aborted = false;
+    const splitter = onChunk ? createClauseSplitter(onChunk) : null;
 
+    try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -311,33 +335,37 @@ class ModuleGemma extends BaseModule {
 
           if (token) {
             aiResponse += token;
-            if (onChunk) {
-              sentenceBuffer += token;
-              // Split on sentence-ending punctuation
-              const sentenceEnd = /^(.*?[.!?])\s+(.*)$/s;
-              let m;
-              while ((m = sentenceEnd.exec(sentenceBuffer)) !== null) {
-                const complete = m[1].trim();
-                if (complete) onChunk(complete);
-                sentenceBuffer = m[2];
-              }
-              // Also split on comma after 10+ words so TTS starts sooner on long sentences
-              if (sentenceBuffer.split(/\s+/).length >= 10) {
-                const commaIdx = sentenceBuffer.indexOf(',');
-                if (commaIdx > 15) {
-                  onChunk(sentenceBuffer.substring(0, commaIdx).trim());
-                  sentenceBuffer = sentenceBuffer.substring(commaIdx + 1).trim();
-                }
-              }
-            }
+            if (splitter) splitter.push(token);
           }
         } catch (e) { /* skip malformed JSON lines */ }
       }
     }
+    } catch (err) {
+      // Barge-in aborts the fetch mid-stream. That is a normal outcome, not a failure:
+      // keep whatever was generated so history stays coherent, and stop emitting.
+      if (err.name === 'AbortError' || signal.aborted) {
+        aborted = true;
+        console.log('[GemmaModule] Generation aborted (user interrupted)');
+      } else {
+        throw err;
+      }
+    } finally {
+      if (this._abortController?.signal === signal) this._abortController = null;
+    }
 
-    // Flush any remaining text that didn't end with punctuation
-    if (onChunk && sentenceBuffer.trim()) {
-      onChunk(sentenceBuffer.trim());
+    // Flush the tail only if we finished naturally — after an interruption the user is
+    // already talking and must not be spoken over.
+    if (!aborted && splitter) splitter.flush();
+
+    if (aborted) {
+      // Keep the partial turn so follow-ups ("what did you just say?") stay coherent,
+      // but skip the background LLM jobs — the user is mid-question and the CPU is needed.
+      if (aiResponse.trim()) {
+        this.chatHistory.push({ role: 'assistant', content: aiResponse.trim() });
+      } else {
+        this.chatHistory.pop(); // drop the orphaned user turn
+      }
+      return aiResponse.trim();
     }
 
     aiResponse = aiResponse || 'No response generated';
@@ -434,6 +462,7 @@ class ModuleGemma extends BaseModule {
   }
 
   async cleanup() {
+    this.abort();
     this.stopKeepAlive();
     this.isOllamaAvailable = false;
     await super.cleanup();

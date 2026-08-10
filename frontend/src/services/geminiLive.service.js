@@ -29,7 +29,14 @@ export const DEFAULT_LIVE_VOICE = 'Kore';
 
 // Prebuilt Gemini voices selectable in Live mode (system TTS voices don't apply here).
 export const GEMINI_LIVE_VOICES = [
-  'Puck', 'Charon', 'Kore', 'Fenrir', 'Aoede', 'Leda', 'Orus', 'Zephyr',
+  { id: 'Aoede', label: 'Aoede (Female, Breezy & Conversational)' },
+  { id: 'Charon', label: 'Charon (Male, Calm & Professional)' },
+  { id: 'Fenrir', label: 'Fenrir (Male, Excitable & Energetic)' },
+  { id: 'Kore', label: 'Kore (Female, Firm & Professional)' },
+  { id: 'Leda', label: 'Leda (Female, Youthful & Energetic)' },
+  { id: 'Orus', label: 'Orus (Male, Firm & Calm)' },
+  { id: 'Puck', label: 'Puck (Male, Upbeat & Lively)' },
+  { id: 'Zephyr', label: 'Zephyr (Female, Bright & Clear)' },
 ];
 
 const CAPTURE_SAMPLE_RATE = 16000;
@@ -111,6 +118,11 @@ export default class GeminiLiveSession {
     this.enableSearch = opts.enableSearch || false;
     this.enableProactiveAudio = opts.enableProactiveAudio || false;
     this.enableAffectiveDialog = opts.enableAffectiveDialog || false;
+    // Cost guards. A Live session bills for streamed audio the whole time it is open, so an
+    // unattended kiosk left connected costs money for an empty room — this is the single
+    // largest source of unexpected spend. 0 disables a guard.
+    this.idleTimeoutMs = opts.idleTimeoutMs || 0;   // no user speech for this long -> hang up
+    this.maxSessionMs = opts.maxSessionMs || 0;     // absolute ceiling regardless of activity
     this.cb = opts.callbacks || {};
 
     this.ws = null;
@@ -133,6 +145,94 @@ export default class GeminiLiveSession {
     this._modelTranscript = '';
     this._turnStartAt = 0;         // timing: first user word of the turn
     this._lastInputAt = 0;         // timing: most recent user word (≈ when they stopped)
+    this._idleTimer = null;
+    this._sessionTimer = null;     // armed once for the whole session, never on reconnect
+
+    // --- Billing metering ---------------------------------------------------
+    // Live API bills by streamed audio, so connected wall-clock time is the primary
+    // cost driver. Tokens come from the server's own usageMetadata rather than being
+    // estimated here — if these numbers are ever shown to a client, they need to be
+    // defensible against Google's console, not our arithmetic.
+    this._sessionStartedAt = null;   // epoch ms, first successful setup
+    this._connectedMs = 0;           // accumulated connected time across reconnects
+    this._lastConnectAt = null;
+    this._usage = { promptTokens: 0, responseTokens: 0, totalTokens: 0, modalities: {} };
+    this._turns = 0;
+    this._usageReported = false;   // guards double-counting on repeated stop()
+  }
+
+  /** Fold one server usageMetadata payload into the session totals. */
+  _accumulateUsage(um) {
+    if (!um) return;
+    const add = (a, b) => (Number(a) || 0) + (Number(b) || 0);
+    this._usage.promptTokens = add(this._usage.promptTokens, um.promptTokenCount);
+    this._usage.responseTokens = add(
+      this._usage.responseTokens,
+      um.responseTokenCount ?? um.candidatesTokenCount
+    );
+    this._usage.totalTokens = add(this._usage.totalTokens, um.totalTokenCount);
+
+    // Per-modality breakdown drives cost: audio tokens are priced very differently
+    // from text. Field naming has shifted across API versions, so read defensively
+    // and keep whatever buckets the server actually sends.
+    for (const key of ['promptTokensDetails', 'responseTokensDetails', 'candidatesTokensDetails']) {
+      for (const d of um[key] || []) {
+        const modality = d.modality || 'UNKNOWN';
+        this._usage.modalities[modality] = add(this._usage.modalities[modality], d.tokenCount);
+      }
+    }
+  }
+
+  /**
+   * Billing snapshot for this session. Duration is authoritative; tokens are present
+   * only if the server reported them.
+   */
+  getUsageReport() {
+    const connectedMs = this._connectedMs + (this._lastConnectAt ? Date.now() - this._lastConnectAt : 0);
+    return {
+      model: this.model,
+      voice: this.voice,
+      startedAt: this._sessionStartedAt ? new Date(this._sessionStartedAt).toISOString() : null,
+      endedAt: new Date().toISOString(),
+      connectedMs,
+      connectedMinutes: Math.round((connectedMs / 60000) * 100) / 100,
+      turns: this._turns,
+      ...this._usage,
+      // Tokens are absent on some model/version combinations; the consumer must not
+      // silently treat that as zero usage.
+      tokensReported: this._usage.totalTokens > 0,
+    };
+  }
+
+  /**
+   * Cost guards. Fires `onAutoClose(reason)` rather than tearing down here — the caller owns
+   * session lifecycle and its UI state would desync if we stopped ourselves.
+   */
+  _armSessionTimers() {
+    if (this.idleTimeoutMs) this._touchIdle();
+    // Armed once. Re-arming on every reconnect would let a session that drops periodically
+    // run forever, which is exactly the case the ceiling exists to catch.
+    if (this.maxSessionMs && !this._sessionTimer) {
+      this._sessionTimer = setTimeout(() => {
+        console.warn(`[Live] session hit the ${Math.round(this.maxSessionMs / 1000)}s ceiling — closing`);
+        this._emit('onAutoClose', 'max_session');
+      }, this.maxSessionMs);
+    }
+  }
+
+  /** Called whenever the user actually speaks — proof a human is still present. */
+  _touchIdle() {
+    if (!this.idleTimeoutMs) return;
+    if (this._idleTimer) clearTimeout(this._idleTimer);
+    this._idleTimer = setTimeout(() => {
+      console.warn(`[Live] no speech for ${Math.round(this.idleTimeoutMs / 1000)}s — closing idle session`);
+      this._emit('onAutoClose', 'idle');
+    }, this.idleTimeoutMs);
+  }
+
+  _clearSessionTimers() {
+    if (this._idleTimer) { clearTimeout(this._idleTimer); this._idleTimer = null; }
+    if (this._sessionTimer) { clearTimeout(this._sessionTimer); this._sessionTimer = null; }
   }
 
   _emit(name, arg) {
@@ -240,6 +340,11 @@ export default class GeminiLiveSession {
       ws.onclose = (e) => {
         console.log(`[Live] websocket closed (${e.code}) ${e.reason || ''}`);
         this.setupComplete = false;
+        // Bank the connected interval so a gap between reconnects isn't billed as usage.
+        if (this._lastConnectAt) {
+          this._connectedMs += Date.now() - this._lastConnectAt;
+          this._lastConnectAt = null;
+        }
         if (this.stopped) { this._emit('onClose'); return; }
         if (!this.everLive) {
           // Closed before the session ever went live — a config/auth/setup error
@@ -288,6 +393,10 @@ export default class GeminiLiveSession {
       realtimeInputConfig: { automaticActivityDetection: this._buildVadConfig() },
       // Survive the native-audio session time limit without dropping the conversation.
       sessionResumption: this.resumptionHandle ? { handle: this.resumptionHandle } : {},
+      // A kiosk session runs for a whole seminar. Without compression every past audio turn
+      // stays in context, so latency and per-turn cost climb until the session hits its
+      // limit. A sliding window keeps context bounded and the session alive indefinitely.
+      contextWindowCompression: { slidingWindow: {} },
     };
     if (this.systemInstruction) {
       cfg.systemInstruction = { parts: [{ text: this.systemInstruction }] };
@@ -319,10 +428,18 @@ export default class GeminiLiveSession {
       this.setupComplete = true;
       this.everLive = true;
       console.log('[Live] setup complete — session live');
+      // Meter connected time from setup, not socket open: billing starts when the
+      // session is actually usable. Reconnects resume the same accumulator.
+      if (!this._sessionStartedAt) this._sessionStartedAt = Date.now();
+      this._lastConnectAt = Date.now();
+      this._armSessionTimers();
       this._emit('onOpen');
       this._emit('onListening');
       return 'setup';
     }
+
+    // Token accounting can ride along with any server message.
+    if (msg.usageMetadata) this._accumulateUsage(msg.usageMetadata);
 
     if (msg.sessionResumptionUpdate) {
       if (msg.sessionResumptionUpdate.resumable && msg.sessionResumptionUpdate.newHandle) {
@@ -393,6 +510,9 @@ export default class GeminiLiveSession {
       if (!this._turnStartAt) this._turnStartAt = now;
       this._lastInputAt = now; // keeps advancing while the user talks; freezes when they stop
       this._userTranscript += sc.inputTranscription.text;
+      // Transcribed speech is the only reliable "a human is still here" signal — open sockets
+      // and model audio are not, since both continue in an empty room.
+      this._touchIdle();
       this._emit('onUserTranscript', this._userTranscript.trim());
     }
     if (sc.outputTranscription && sc.outputTranscription.text) {
@@ -421,6 +541,7 @@ export default class GeminiLiveSession {
       const answer = this._modelTranscript.trim();
       const question = this._userTranscript.trim();
       this.modelSpeaking = false;
+      this._turns++;
       if (this._turnStartAt) {
         console.log(`[Live][timing] ⏱️ full turn ${Math.round(performance.now() - this._turnStartAt)}ms (user start → model done)`);
       }
@@ -504,10 +625,21 @@ export default class GeminiLiveSession {
   }
 
   stop() {
+    // Emit the billing snapshot before teardown, and only for a session that actually
+    // connected — a failed start is not usage. Guarded so repeated stop() calls can't
+    // double-count a tenant's minutes.
+    if (this.everLive && !this._usageReported) {
+      this._usageReported = true;
+      const report = this.getUsageReport();
+      console.log(`[Live][usage] ${report.connectedMinutes}min | ${report.turns} turns | ${report.totalTokens} tokens | ${report.model}`);
+      this._emit('onUsageReport', report);
+    }
+
     this.stopped = true;
     this.setupComplete = false;
     this.modelSpeaking = false;
 
+    this._clearSessionTimers();
     this._flushPlayback();
 
     if (this.ws) {

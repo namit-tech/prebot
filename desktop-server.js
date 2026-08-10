@@ -198,7 +198,7 @@ class DesktopServer {
 
         expressApp.get('/api/active-module', (req, res) => {
             const models = this.currentUserSession ? (this.currentUserSession.models || []) : [];
-            const isAIBrainAuthorized = models.includes('gemma') || models.includes('gemini');
+            const isAIBrainAuthorized = models.includes('gemma') || models.includes('gemini') || models.includes('openai');
             
             res.json({ 
                 activeModule: this.activeModule,

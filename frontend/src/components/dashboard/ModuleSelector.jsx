@@ -12,7 +12,7 @@ import { FaClipboardList, FaBrain, FaRobot, FaInfoCircle, FaExclamationCircle } 
 const ModuleSelector = () => {
   const { availableModules, activeModule, loadModule, loading, error, clearError } = useModule();
   const [selectedTab, setSelectedTab] = useState(activeModule || null);
-  const [showConfig, setShowConfig] = useState(false);
+  const [showConfig, setShowConfig] = useState(true);
   const [showAdmin, setShowAdmin] = useState(false);
   const [showSetup, setShowSetup] = useState(false);
   const [showOllamaSetup, setShowOllamaSetup] = useState(false);
@@ -58,8 +58,8 @@ const ModuleSelector = () => {
         // Use the new automated AI setup wizard
         setShowOllamaSetup(true);
       } else if (result.code === 'REQUIRES_SETUP') {
-        // For Gemini, we don't show the offline wizard, we show the config
-        if (moduleId === 'gemini') {
+        // For Gemini or OpenAI, we show the online config
+        if (moduleId === 'gemini' || moduleId === 'openai') {
           setShowConfig(true);
         } else {
           // Old setup wizard (legacy manual setup)
@@ -92,7 +92,8 @@ const ModuleSelector = () => {
   const moduleIcons = {
     predefined: <FaClipboardList />,
     gemma: <FaBrain />,
-    gemini: <FaRobot />
+    gemini: <FaRobot />,
+    openai: <FaRobot />
   };
 
   return (
@@ -196,43 +197,39 @@ const ModuleSelector = () => {
         )}
       </div>
 
-      {activeModule && (
-        <>
-          <div className="flex gap-2 mb-4">
-            {(activeModule === 'gemma' || activeModule === 'gemini') && (
-              <button
-                onClick={() => setShowConfig(!showConfig)}
-                className="btn-secondary"
-              >
-                {showConfig ? 'Hide' : 'Show'} Status
-              </button>
-            )}
-            {activeModule === 'predefined' && (
-              <button
-                onClick={() => setShowAdmin(!showAdmin)}
-                className="btn-secondary"
-              >
-                {showAdmin ? 'Hide' : 'Manage'} Questions
-              </button>
-            )}
-          </div>
+      <div className="flex gap-2 mb-4">
+        {(selectedTab === 'gemma' || selectedTab === 'gemini' || selectedTab === 'openai') && (
+          <button
+            onClick={() => setShowConfig(!showConfig)}
+            className="btn-secondary"
+          >
+            {showConfig ? 'Hide Settings' : 'Show Settings'}
+          </button>
+        )}
+        {activeModule === 'predefined' && selectedTab === 'predefined' && (
+          <button
+            onClick={() => setShowAdmin(!showAdmin)}
+            className="btn-secondary"
+          >
+            {showAdmin ? 'Hide' : 'Manage'} Questions
+          </button>
+        )}
+      </div>
 
-          {showConfig && (selectedTab === 'gemma' || selectedTab === 'gemini') && (
-            <div className="mb-6">
-              <AIStatusPanel 
-                onRequestSetup={() => setShowOllamaSetup(true)} 
-                activeTabId={selectedTab}
-              />
-            </div>
-          )}
-          {showAdmin && selectedTab === 'predefined' && <PredefinedAdmin />}
+      {showConfig && (selectedTab === 'gemma' || selectedTab === 'gemini' || selectedTab === 'openai') && (
+        <div className="mb-6">
+          <AIStatusPanel 
+            onRequestSetup={() => setShowOllamaSetup(true)} 
+            activeTabId={selectedTab}
+          />
+        </div>
+      )}
+      {showAdmin && selectedTab === 'predefined' && <PredefinedAdmin />}
 
-          {selectedTab === 'predefined' ? (
-            <PredefinedInterface />
-          ) : (
-            <AIBrainInterface activeTabId={selectedTab} />
-          )}
-        </>
+      {selectedTab === 'predefined' ? (
+        <PredefinedInterface />
+      ) : (
+        activeModule === selectedTab && <AIBrainInterface activeTabId={selectedTab} />
       )}
       
       {/* Setup Wizard Modal (Legacy) */}

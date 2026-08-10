@@ -19,7 +19,9 @@ const VoiceSettings = () => {
         listeningProfile: 'balanced',
         handsFreeMode: false,
         voiceGuide: false,
-        wakeWord: 'hello prebot'
+        wakeWord: 'hello prebot',
+        fullDuplex: false,
+        piperVoice: 'en_US-lessac-medium'
     });
 
     const [voices, setVoices] = useState([]);
@@ -457,6 +459,26 @@ const VoiceSettings = () => {
                                     <FaMicrophone size={24} className="text-slate-300" />
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* Interruptible Voice (full duplex) — desktop only, needs streaming Piper */}
+                    {isAIAuthorized && !!window.electronAPI?.piperStreamStart && (
+                        <div className={`rounded-2xl p-4 border transition-all duration-300 ${settings.fullDuplex ? 'bg-emerald-600 border-emerald-700 shadow-lg shadow-emerald-200' : 'bg-white border-slate-200/60'}`}>
+                            <div className="flex items-center justify-between mb-3">
+                                <label className={`text-[10px] font-black uppercase tracking-widest ${settings.fullDuplex ? 'text-white/60' : 'text-slate-400'}`}>Interruptible Voice</label>
+                                <button
+                                    onClick={() => setSettings({ ...settings, fullDuplex: !settings.fullDuplex })}
+                                    className={`relative w-8 h-4 rounded-full transition-all ${settings.fullDuplex ? 'bg-white' : 'bg-slate-300'}`}
+                                >
+                                    <div className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${settings.fullDuplex ? 'left-4.5 bg-emerald-600' : 'left-0.5 bg-white'}`} />
+                                </button>
+                            </div>
+                            <p className={`text-[9px] font-bold leading-relaxed ${settings.fullDuplex ? 'text-white/70' : 'text-slate-400'}`}>
+                                {settings.fullDuplex
+                                    ? 'Mic stays open while the assistant speaks, so users can cut in mid-sentence. Uses the offline Piper voice. If the assistant starts replying to itself, lower the speaker volume or turn this off.'
+                                    : 'Assistant finishes every sentence before listening again. Turn on to allow users to interrupt.'}
+                            </p>
                         </div>
                     )}
                 </div>

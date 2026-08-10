@@ -73,6 +73,90 @@ class PiperHandler {
     }
 
     /**
+     * Sample rate the model emits, read from its sidecar config.
+     * The renderer needs this to build correctly-pitched AudioBuffers.
+     * @param {string} modelName
+     * @returns {number} Hz (22050 fallback — the medium-quality Piper default)
+     */
+    getSampleRate(modelName = 'en_US-lessac-medium') {
+        try {
+            const cfgPath = path.join(this.modelsPath, `${modelName}.onnx.json`);
+            const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+            return cfg?.audio?.sample_rate || 22050;
+        } catch (e) {
+            return 22050;
+        }
+    }
+
+    /**
+     * Streaming synthesis: emits raw PCM as Piper produces it, instead of writing a
+     * WAV file and playing it afterwards. This is what makes barge-in possible —
+     * the renderer can play chunks immediately and `cancel()` kills the process
+     * mid-sentence when the user interrupts.
+     *
+     * Output is mono 16-bit signed LE PCM at getSampleRate(modelName).
+     *
+     * @param {string} text
+     * @param {string} modelName
+     * @param {{onChunk:Function, onEnd:Function, onError:Function}} handlers
+     * @returns {{cancel: Function}} handle — call cancel() to stop generation immediately
+     */
+    streamSpeech(text, modelName = 'en_US-lessac-medium', handlers = {}) {
+        const { onChunk, onEnd, onError } = handlers;
+        const modelPath = path.join(this.modelsPath, `${modelName}.onnx`);
+
+        if (!fs.existsSync(modelPath)) {
+            if (onError) onError(new Error(`Voice model not found: ${modelName}`));
+            return { cancel: () => {} };
+        }
+        if (!fs.existsSync(this.piperPath)) {
+            if (onError) onError(new Error('Piper executable not found. Please run setup-piper.ps1'));
+            return { cancel: () => {} };
+        }
+
+        const proc = spawn(this.piperPath, [
+            '--model', modelPath,
+            '--output_raw',
+            '--quiet',
+        ]);
+
+        let cancelled = false;
+        let errorOutput = '';
+
+        proc.stdout.on('data', (chunk) => {
+            if (!cancelled && onChunk) onChunk(chunk);
+        });
+        proc.stderr.on('data', (data) => { errorOutput += data.toString(); });
+
+        proc.on('close', (code) => {
+            if (cancelled) return; // caller already moved on
+            if (code === 0) {
+                if (onEnd) onEnd();
+            } else if (onError) {
+                onError(new Error(`Piper exited ${code}: ${errorOutput}`));
+            }
+        });
+        proc.on('error', (err) => {
+            if (!cancelled && onError) onError(err);
+        });
+
+        try {
+            proc.stdin.write(text);
+            proc.stdin.end();
+        } catch (err) {
+            if (onError) onError(err);
+        }
+
+        return {
+            cancel: () => {
+                if (cancelled) return;
+                cancelled = true;
+                try { proc.kill(); } catch (e) { /* already exited */ }
+            },
+        };
+    }
+
+    /**
      * Get available voice models from assets folder
      */
     getVoices() {
