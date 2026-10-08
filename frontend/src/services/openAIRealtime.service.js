@@ -110,6 +110,7 @@ export default class OpenAIRealtimeSession {
     this.setupComplete = false;
     this.everLive = false;
     this.modelSpeaking = false;
+    this._responseDone = false;  // server finished the response; waiting for playback to drain
     this._userTranscript = '';
     this._modelTranscript = '';
     this._turns = 0;
@@ -349,6 +350,7 @@ export default class OpenAIRealtimeSession {
     if (type === 'response.audio.delta' || type === 'response.output_audio.delta') {
       const delta = msg.delta;
       if (delta) {
+        this._responseDone = false;
         if (!this.modelSpeaking) {
           this.modelSpeaking = true;
           this._emit('onModelAudioStart');
@@ -376,13 +378,15 @@ export default class OpenAIRealtimeSession {
     if (type === 'response.done') {
       const answer = this._modelTranscript.trim();
       const question = this._userTranscript.trim();
-      this.modelSpeaking = false;
       this._turns++;
 
       this._emit('onTurnComplete', { answer, question });
       this._userTranscript = '';
       this._modelTranscript = '';
-      this._emit('onListening');
+      // response.done means the server finished sending audio, not that it finished playing.
+      // Defer onListening until the scheduled playback drains so the video stays in sync.
+      this._responseDone = true;
+      this._maybeEmitPlaybackEnd();
       return null;
     }
 
@@ -454,7 +458,17 @@ export default class OpenAIRealtimeSession {
     this.nextStartTime += buffer.duration;
 
     this.scheduledSources.add(src);
-    src.onended = () => this.scheduledSources.delete(src);
+    src.onended = () => {
+      this.scheduledSources.delete(src);
+      this._maybeEmitPlaybackEnd();
+    };
+  }
+
+  _maybeEmitPlaybackEnd() {
+    if (!this._responseDone || this.scheduledSources.size > 0) return;
+    this._responseDone = false;
+    this.modelSpeaking = false;
+    this._emit('onListening');
   }
 
   _flushPlayback() {
@@ -463,6 +477,7 @@ export default class OpenAIRealtimeSession {
     }
     this.scheduledSources.clear();
     this.nextStartTime = 0;
+    this._responseDone = false;
   }
 
   stop() {

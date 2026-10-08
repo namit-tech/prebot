@@ -57,6 +57,15 @@ class ModuleOpenAI extends BaseModule {
     localStorage.setItem('openai_model', model);
   }
 
+  // Realtime models only work over the Realtime WebSocket API, not chat/completions
+  isRealtimeModel(model = this.modelName) {
+    return /realtime/i.test(model || '');
+  }
+
+  getChatModel() {
+    return this.isRealtimeModel() ? 'gpt-4o-mini' : (this.modelName || 'gpt-4o-mini');
+  }
+
   setSystemContext(context) {
     this.systemContext = context;
   }
@@ -124,7 +133,7 @@ class ModuleOpenAI extends BaseModule {
         'Authorization': `Bearer ${this.apiKey}`
       },
       body: JSON.stringify({
-        model: this.modelName || 'gpt-4o-mini',
+        model: this.getChatModel(),
         messages: messages,
         temperature: 0.7,
         max_tokens: 300,
@@ -199,7 +208,18 @@ class ModuleOpenAI extends BaseModule {
   async testConnection() {
     if (!this.apiKey) return { success: false, error: 'No OpenAI API Key' };
     try {
-      const result = await this.callOpenAIAPI('Ping');
+      if (this.isRealtimeModel()) {
+        // Verify key + model access without opening a voice session
+        const response = await fetch(`https://api.openai.com/v1/models/${encodeURIComponent(this.modelName)}`, {
+          headers: { 'Authorization': `Bearer ${this.apiKey}` }
+        });
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+        }
+        return { success: true, message: `OpenAI Realtime Connection Successful (${this.modelName})` };
+      }
+      await this.callOpenAIAPI('Ping');
       return { success: true, message: 'OpenAI Connection Successful' };
     } catch (error) {
       return { success: false, error: error.message };

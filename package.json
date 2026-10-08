@@ -1,6 +1,6 @@
 {
   "name": "prebot",
-  "version": "1.0.16",
+  "version": "1.0.18",
   "main": "loader.js",
   "description": "Offline AI Chatbot",
   "scripts": {

@@ -347,18 +347,13 @@
                                 correctPath = `/assets/videos/${filename}`;
                             }
                             
-                            // Append a cache-buster query parameter linked to the RunID to force a hard reload
-                            // if it's the same physical file being played as a new separate event
-                            correctPath = `${correctPath}?t=${this.lastRunId}`;
-                            
-                            // Simple check:
+                            // Same file already loaded: reuse it (restart from 0 in startAnimation)
+                            // instead of re-downloading, so playback starts with the speech.
                             const currentSrc = this.video.querySelector('source')?.src;
-                            if (currentSrc && currentSrc.endsWith(correctPath) && this.lastLoadedRunId === this.lastRunId) {
-                                // Same video and same event run, just resolve
+                            if (currentSrc && currentSrc.endsWith(correctPath) && this.video.readyState >= 2) {
                                 return Promise.resolve(true);
                             }
 
-                            this.lastLoadedRunId = this.lastRunId;
                             this.video.innerHTML = '';
                             const source = document.createElement('source');
                             source.src = correctPath;
